@@ -822,16 +822,45 @@ export function getConfirmState(client: MatrixClient, room: Room): ConfirmState 
 export function useConfirmState(roomId: string | null): ConfirmState | null {
   return useSyncExternalStore(
     subscribe,
-    () => {
-      if (!roomId) return null;
-      const client = getClient();
-      if (!client) return null;
-      const room = client.getRoom(roomId);
-      if (!room) return null;
-      return getConfirmState(client, room);
-    },
+    () => getStableConfirmState(roomId),
     () => null,
   );
+}
+
+// Per-room cache so getSnapshot returns a referentially-stable ConfirmState
+// when nothing relevant changed. Without this, every Matrix sync notify()
+// re-renders MailDisplay because the snapshot identity flips, which on a
+// busy account spirals into "Maximum update depth exceeded" and a blank
+// screen the moment you click a conversation.
+const _confirmStateCache = new Map<
+  string,
+  { fp: string; value: ConfirmState }
+>();
+
+function confirmStateFingerprint(state: ConfirmState): string {
+  return [
+    state.status,
+    state.myRole ?? "",
+    state.counterpartyMxid ?? "",
+    state.request?.event_id ?? "",
+    state.request?.code_hash ?? "",
+    state.proof?.sender ?? "",
+    state.proof?.ts ?? "",
+  ].join("|");
+}
+
+function getStableConfirmState(roomId: string | null): ConfirmState | null {
+  if (!roomId) return null;
+  const client = getClient();
+  if (!client) return null;
+  const room = client.getRoom(roomId);
+  if (!room) return null;
+  const next = getConfirmState(client, room);
+  const fp = confirmStateFingerprint(next);
+  const prev = _confirmStateCache.get(roomId);
+  if (prev && prev.fp === fp) return prev.value;
+  _confirmStateCache.set(roomId, { fp, value: next });
+  return next;
 }
 
 /** Sender side: hash the code and post a request event. Returns the code hash. */
