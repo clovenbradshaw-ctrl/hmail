@@ -21,10 +21,11 @@ function isTextEntryTarget(t: EventTarget | null): boolean {
  */
 function visibleConversations(
   all: Conversation[],
-  folder: "inbox" | "starred" | "archive",
+  folder: "inbox" | "starred" | "archive" | "media",
 ): Conversation[] {
   if (folder === "starred") return all.filter((c) => c.starred);
   if (folder === "archive") return all.filter((c) => c.archived);
+  // Media view doesn't list conversations; keyboard nav falls back to inbox.
   return all.filter((c) => !c.archived);
 }
 
