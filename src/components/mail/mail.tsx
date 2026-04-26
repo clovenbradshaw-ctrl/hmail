@@ -4,13 +4,16 @@ import { MailList } from "@/components/mail/mail-list";
 import { MailDisplay } from "@/components/mail/mail-display";
 import { Compose } from "@/components/mail/compose";
 import { ManageRooms } from "@/components/mail/manage-rooms";
+import { KeyboardHelp } from "@/components/mail/keyboard-help";
 import { useMailStore } from "@/hooks/use-mail";
+import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { cn } from "@/lib/utils";
 
 export function Mail() {
   const selectedRoomId = useMailStore((s) => s.selectedRoomId);
   const sidebarOpen = useMailStore((s) => s.sidebarOpen);
   const setSidebarOpen = useMailStore((s) => s.setSidebarOpen);
+  useKeyboardShortcuts();
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -52,6 +55,7 @@ export function Mail() {
 
       <Compose />
       <ManageRooms />
+      <KeyboardHelp />
     </TooltipProvider>
   );
 }
