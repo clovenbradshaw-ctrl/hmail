@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /*
+   * hmail design tokens.
+   *
+   * The aesthetic is paper + ink. Off-white warm cream backgrounds, deep iron-gall
+   * text rather than pure black, a wax-seal red for unread / status moments,
+   * and a single restrained accent for selection states. Avoid the generic
+   * white/blue dashboard look. Closer to a literary journal than a SaaS app.
+   */
+  :root {
+    /* Paper. Warm cream, not white. */
+    --background: 36 33% 96%;
+    --foreground: 25 18% 14%;
+
+    --card: 36 33% 98%;
+    --card-foreground: 25 18% 14%;
+
+    --popover: 36 30% 98%;
+    --popover-foreground: 25 18% 14%;
+
+    /* Ink. Iron-gall, not pure black. */
+    --primary: 25 22% 18%;
+    --primary-foreground: 36 33% 96%;
+
+    --secondary: 36 22% 90%;
+    --secondary-foreground: 25 18% 20%;
+
+    --muted: 36 22% 92%;
+    --muted-foreground: 25 12% 38%;
+
+    --accent: 36 22% 88%;
+    --accent-foreground: 25 18% 18%;
+
+    /* Wax seal. For unread indicators and important status. */
+    --seal: 8 56% 42%;
+    --seal-foreground: 36 33% 96%;
+
+    --destructive: 0 62% 38%;
+    --destructive-foreground: 36 33% 96%;
+
+    --border: 30 18% 84%;
+    --input: 30 18% 84%;
+    --ring: 25 22% 28%;
+
+    --radius: 0.4rem;
+  }
+
+  .dark {
+    /* Inverted, but warm. Charcoal paper, not slate. */
+    --background: 25 12% 9%;
+    --foreground: 36 22% 92%;
+
+    --card: 25 12% 11%;
+    --card-foreground: 36 22% 92%;
+
+    --popover: 25 12% 11%;
+    --popover-foreground: 36 22% 92%;
+
+    --primary: 36 22% 92%;
+    --primary-foreground: 25 12% 9%;
+
+    --secondary: 25 8% 18%;
+    --secondary-foreground: 36 22% 90%;
+
+    --muted: 25 8% 16%;
+    --muted-foreground: 36 12% 62%;
+
+    --accent: 25 8% 20%;
+    --accent-foreground: 36 22% 92%;
+
+    --seal: 8 60% 56%;
+    --seal-foreground: 25 12% 9%;
+
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 36 22% 92%;
+
+    --border: 25 6% 22%;
+    --input: 25 6% 22%;
+    --ring: 36 22% 70%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "ss02", "kern";
+  }
+
+  /* Use Fraunces' opsz axis for headings/displays where it shines. */
+  h1, h2, h3, h4, .font-display {
+    font-optical-sizing: auto;
+  }
+}
+
+@layer utilities {
+  /* Subtle grain to make the cream feel like paper, not flat color. */
+  .paper-grain {
+    background-image:
+      radial-gradient(
+        rgba(58, 39, 22, 0.03) 1px,
+        transparent 1px
+      );
+    background-size: 3px 3px;
+  }
+}
