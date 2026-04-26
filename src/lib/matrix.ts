@@ -6,9 +6,16 @@ import {
   RoomStateEvent,
   MatrixEventEvent,
 } from "matrix-js-sdk";
-
-// Stage 4 wires SAS UI; we just listen so cross-signing isn't dropped silently.
-const VERIFICATION_REQUEST_EVENT = "crypto.verificationRequestReceived" as const;
+import {
+  CryptoEvent,
+  VerificationPhase,
+  VerificationRequestEvent,
+  VerifierEvent,
+  type GeneratedSecretStorageKey,
+  type ShowSasCallbacks,
+  type VerificationRequest,
+  type Verifier,
+} from "matrix-js-sdk/lib/crypto-api";
 
 const SESSION_KEY = "hmail:session";
 const STORE_PREFIX = "hmail:matrix:";
@@ -25,6 +32,11 @@ let _client: MatrixClient | null = null;
 type SyncPhase = "logged_out" | "starting" | "prepared" | "syncing" | "error";
 let _syncState: SyncPhase = "logged_out";
 const _listeners = new Set<() => void>();
+
+let _pendingVerification: VerificationRequest | null = null;
+let _activeVerifier: Verifier | null = null;
+let _activeSas: ShowSasCallbacks | null = null;
+let _secretStorageReady: boolean | null = null;
 
 function notify() {
   for (const fn of _listeners) fn();
@@ -113,8 +125,11 @@ function buildOpts(
 
 function attachListeners(client: MatrixClient) {
   client.on(ClientEvent.Sync, (state) => {
-    if (state === "PREPARED") _syncState = "prepared";
-    else if (state === "SYNCING") _syncState = "syncing";
+    if (state === "PREPARED") {
+      _syncState = "prepared";
+      // Fire-and-forget; updates `_secretStorageReady` and notifies on change.
+      void refreshSecretStorageStatus();
+    } else if (state === "SYNCING") _syncState = "syncing";
     else if (state === "ERROR") _syncState = "error";
     notify();
   });
@@ -130,11 +145,61 @@ function attachListeners(client: MatrixClient) {
 
   client.on(MatrixEventEvent.Decrypted, () => notify());
 
-  // Verification handler — Stage 1 just logs; Stage 4 surfaces SAS UI.
-  (client as unknown as {
-    on: (ev: string, cb: (req: unknown) => void) => void;
-  }).on(VERIFICATION_REQUEST_EVENT, (req) => {
-    console.log("[hmail] verification request received", req);
+  // matrix-js-sdk types CryptoEvent on the client emitter via a separate
+  // augmentation; cast through `unknown` rather than fighting the surface.
+  const cryptoOn = (
+    client as unknown as {
+      on: (ev: CryptoEvent, cb: (...args: unknown[]) => void) => void;
+    }
+  ).on.bind(client);
+
+  cryptoOn(CryptoEvent.VerificationRequestReceived, (req) => {
+    attachVerificationRequest(req as VerificationRequest);
+  });
+}
+
+function attachVerificationRequest(req: VerificationRequest) {
+  // Replace any prior request with the freshest one. Older requests will
+  // fall out of scope when their phase advances to Cancelled / Done.
+  _pendingVerification = req;
+  _activeVerifier = null;
+  _activeSas = null;
+  notify();
+
+  const handleChange = () => {
+    if (req.phase === VerificationPhase.Started && req.verifier && req.verifier !== _activeVerifier) {
+      attachVerifier(req.verifier);
+    }
+    if (
+      req.phase === VerificationPhase.Cancelled ||
+      req.phase === VerificationPhase.Done
+    ) {
+      if (_pendingVerification === req) {
+        _pendingVerification = null;
+        _activeVerifier = null;
+        _activeSas = null;
+      }
+    }
+    notify();
+  };
+  req.on(VerificationRequestEvent.Change, handleChange);
+}
+
+function attachVerifier(verifier: Verifier) {
+  _activeVerifier = verifier;
+  _activeSas = verifier.getShowSasCallbacks();
+  notify();
+
+  verifier.on(VerifierEvent.ShowSas, (sas) => {
+    _activeSas = sas;
+    notify();
+  });
+  verifier.on(VerifierEvent.Cancel, () => {
+    if (_activeVerifier === verifier) {
+      _activeVerifier = null;
+      _activeSas = null;
+    }
+    notify();
   });
 }
 
@@ -218,6 +283,10 @@ export async function logout() {
   }
   clearSession();
   _syncState = "logged_out";
+  _pendingVerification = null;
+  _activeVerifier = null;
+  _activeSas = null;
+  _secretStorageReady = null;
   notify();
   // Wipe IndexedDB stores so a fresh login starts clean.
   try {
@@ -226,4 +295,150 @@ export async function logout() {
   } catch {
     /* ignore */
   }
+}
+
+// ---------------------------------------------------------------------------
+// Verification (SAS) — incoming-request surface
+// ---------------------------------------------------------------------------
+
+export function getPendingVerification(): VerificationRequest | null {
+  return _pendingVerification;
+}
+
+export function getActiveSas(): ShowSasCallbacks | null {
+  return _activeSas;
+}
+
+export function getActiveVerifier(): Verifier | null {
+  return _activeVerifier;
+}
+
+export async function acceptPendingVerification(): Promise<void> {
+  const req = _pendingVerification;
+  if (!req) return;
+  await req.accept();
+  // Once both sides are Ready, kick off SAS as our preferred method.
+  // The remote side may have started us — if so, the verifier is already there.
+  if (!req.verifier && req.phase === VerificationPhase.Ready) {
+    try {
+      const verifier = await req.startVerification("m.sas.v1");
+      attachVerifier(verifier);
+      // Begin the verification — resolves once both sides have exchanged
+      // m.key.verification.mac. We don't await here; the modal drives it.
+      void verifier.verify().catch(() => {
+        /* errors surface via VerifierEvent.Cancel */
+      });
+    } catch {
+      /* if start fails, the user can cancel and retry */
+    }
+  }
+}
+
+export async function cancelPendingVerification(): Promise<void> {
+  const req = _pendingVerification;
+  if (!req) return;
+  try {
+    await req.cancel({ reason: "User declined" });
+  } catch {
+    /* ignore */
+  }
+  _pendingVerification = null;
+  _activeVerifier = null;
+  _activeSas = null;
+  notify();
+}
+
+export async function confirmSas(): Promise<void> {
+  const sas = _activeSas;
+  if (!sas) return;
+  try {
+    await sas.confirm();
+  } catch {
+    /* ignore — Cancel event will clean up state */
+  }
+}
+
+export function reportSasMismatch(): void {
+  _activeSas?.mismatch();
+}
+
+// ---------------------------------------------------------------------------
+// Secret storage / key backup bootstrap
+// ---------------------------------------------------------------------------
+
+export function getSecretStorageReady(): boolean | null {
+  return _secretStorageReady;
+}
+
+/**
+ * Refresh the cached `isSecretStorageReady()` value. Called after sync prepared
+ * and after a successful bootstrap.
+ */
+export async function refreshSecretStorageStatus(): Promise<boolean | null> {
+  const client = _client;
+  if (!client) {
+    _secretStorageReady = null;
+    return null;
+  }
+  const crypto = client.getCrypto();
+  if (!crypto) return _secretStorageReady;
+  try {
+    const ready = await crypto.isSecretStorageReady();
+    if (ready !== _secretStorageReady) {
+      _secretStorageReady = ready;
+      notify();
+    }
+    return ready;
+  } catch {
+    return _secretStorageReady;
+  }
+}
+
+/**
+ * Set up cross-signing + secret storage + a new key backup, returning the
+ * generated recovery key (encoded for display).
+ *
+ * `password` is the user's account password — required for the UIA challenge
+ * on `authUploadDeviceSigningKeys`. Most homeservers gate cross-signing
+ * publication behind it.
+ */
+export async function setupSecretStorage(password: string): Promise<string> {
+  const client = _client;
+  if (!client) throw new Error("Not signed in.");
+  const crypto = client.getCrypto();
+  if (!crypto) throw new Error("Crypto not initialised.");
+  const userId = client.getUserId();
+  if (!userId) throw new Error("No user id on client.");
+
+  // 1. Generate a recovery key. We hold onto it locally so bootstrap can
+  //    return it via createSecretStorageKey, and so we can show it to the
+  //    user afterwards.
+  const recoveryKey: GeneratedSecretStorageKey =
+    await crypto.createRecoveryKeyFromPassphrase();
+
+  // 2. Cross-signing first, with UIA backed by the password we collected.
+  await crypto.bootstrapCrossSigning({
+    authUploadDeviceSigningKeys: async (makeRequest) => {
+      await makeRequest({
+        type: "m.login.password",
+        identifier: { type: "m.id.user", user: userId },
+        password,
+      });
+    },
+  });
+
+  // 3. Secret storage + a fresh key backup.
+  await crypto.bootstrapSecretStorage({
+    createSecretStorageKey: async () => recoveryKey,
+    setupNewKeyBackup: true,
+  });
+
+  await refreshSecretStorageStatus();
+
+  if (!recoveryKey.encodedPrivateKey) {
+    throw new Error(
+      "Recovery key was generated but no encoded form is available.",
+    );
+  }
+  return recoveryKey.encodedPrivateKey;
 }
