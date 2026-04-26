@@ -14,6 +14,68 @@ const SESSION_KEY = "hmail:session";
 const STORE_PREFIX = "hmail:matrix:";
 const CRYPTO_STORE_NAME = "hmail-crypto";
 
+// matrix-rust-sdk uses `cryptoDatabasePrefix` as a *prefix* and creates DBs
+// named like `hmail-crypto::matrix-sdk-crypto`, not the bare prefix. Anything
+// we want to wipe has to be matched by these prefixes, not exact names.
+const HMAIL_DB_PREFIXES = [STORE_PREFIX, CRYPTO_STORE_NAME];
+
+/**
+ * Wipe every IndexedDB database the app owns (sync cache + Rust crypto
+ * stores). The crypto SDK uses `cryptoDatabasePrefix` as a prefix, so the
+ * actual DB names look like `hmail-crypto::matrix-sdk-crypto` — deleting the
+ * bare prefix is a no-op. We enumerate via `indexedDB.databases()` (Chromium,
+ * Safari 14+, Firefox 126+) and fall back to deleting the known names so a
+ * rare environment without enumeration still wipes the most-common store.
+ *
+ * Returns once every delete has either resolved, blocked, or errored — we
+ * don't want a half-wiped state to surface on the next bootstrap.
+ */
+async function wipeLocalStores(): Promise<void> {
+  if (typeof indexedDB === "undefined") return;
+  const names = new Set<string>();
+  try {
+    const dbs = await (
+      indexedDB as unknown as {
+        databases?: () => Promise<{ name?: string }[]>;
+      }
+    ).databases?.();
+    if (Array.isArray(dbs)) {
+      for (const db of dbs) {
+        if (
+          typeof db.name === "string" &&
+          HMAIL_DB_PREFIXES.some((p) => db.name!.startsWith(p))
+        ) {
+          names.add(db.name);
+        }
+      }
+    }
+  } catch {
+    /* enumeration not supported — fall back to known names below */
+  }
+  // Belt-and-suspenders: include the canonical names we created directly, in
+  // case enumeration silently dropped them or isn't available.
+  names.add(`${STORE_PREFIX}sync`);
+  names.add(CRYPTO_STORE_NAME);
+  names.add(`${CRYPTO_STORE_NAME}::matrix-sdk-crypto`);
+  names.add(`${CRYPTO_STORE_NAME}::matrix-sdk-crypto-meta`);
+
+  await Promise.all(
+    Array.from(names).map(
+      (name) =>
+        new Promise<void>((resolve) => {
+          try {
+            const req = indexedDB.deleteDatabase(name);
+            req.onsuccess = () => resolve();
+            req.onerror = () => resolve();
+            req.onblocked = () => resolve();
+          } catch {
+            resolve();
+          }
+        }),
+    ),
+  );
+}
+
 export interface PersistedSession {
   access_token: string;
   user_id: string;
@@ -138,6 +200,27 @@ function attachListeners(client: MatrixClient) {
   });
 }
 
+/**
+ * The error matrix-rust-sdk throws when the persisted account in the crypto
+ * store doesn't match (user_id, device_id) of the freshly-logged-in client.
+ * The exact wording can drift between SDK versions, so we match loosely: the
+ * substrings here have to come from a single error chain we can recover from
+ * by wiping local stores and reopening.
+ */
+function isCryptoAccountMismatch(err: unknown): boolean {
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : String((err as { message?: unknown })?.message ?? "");
+  return (
+    /account in the store doesn't match/i.test(msg) ||
+    /CryptoStoreError/i.test(msg) ||
+    /MismatchedAccount/i.test(msg)
+  );
+}
+
 async function bootstrapClient(
   baseUrl: string,
   session?: PersistedSession,
@@ -151,12 +234,29 @@ async function bootstrapClient(
   }
 
   // Rust crypto, IndexedDB-backed. This is the single most important call
-  // in the whole app — wrong store and decryption silently fails.
+  // in the whole app — wrong store and decryption silently fails. If the
+  // persisted store is from a previous session (different device_id), the
+  // SDK refuses to open it with "account in the store doesn't match the
+  // account in the constructor". Wipe and retry once so a stale store from
+  // a prior login doesn't hold the user hostage.
   if ("initRustCrypto" in client && typeof client.initRustCrypto === "function") {
-    await client.initRustCrypto({
-      useIndexedDB: true,
-      cryptoDatabasePrefix: CRYPTO_STORE_NAME,
-    });
+    try {
+      await client.initRustCrypto({
+        useIndexedDB: true,
+        cryptoDatabasePrefix: CRYPTO_STORE_NAME,
+      });
+    } catch (err) {
+      if (!isCryptoAccountMismatch(err)) throw err;
+      console.warn(
+        "[hmail] crypto store mismatch from a previous session — wiping and retrying",
+        err,
+      );
+      await wipeLocalStores();
+      await client.initRustCrypto({
+        useIndexedDB: true,
+        cryptoDatabasePrefix: CRYPTO_STORE_NAME,
+      });
+    }
   }
 
   attachListeners(client);
@@ -196,6 +296,12 @@ export async function loginWithPassword(
     device_id: res.device_id,
     home_server: homeserverUrl,
   };
+  // The homeserver issued a fresh device_id. Any IndexedDB state from a
+  // previous login carries a different device_id, and the Rust crypto store
+  // refuses to open against a mismatched account. Wipe before bootstrap so
+  // every fresh password login starts clean — sync cache and crypto state
+  // are session-bound and not useful to keep across logins.
+  await wipeLocalStores();
   saveSession(session);
   return bootstrapClient(homeserverUrl, session);
 }
@@ -219,11 +325,8 @@ export async function logout() {
   clearSession();
   _syncState = "logged_out";
   notify();
-  // Wipe IndexedDB stores so a fresh login starts clean.
-  try {
-    indexedDB.deleteDatabase(`${STORE_PREFIX}sync`);
-    indexedDB.deleteDatabase(CRYPTO_STORE_NAME);
-  } catch {
-    /* ignore */
-  }
+  // Wipe IndexedDB stores so a fresh login starts clean. The crypto SDK
+  // names its DBs `<prefix>::matrix-sdk-crypto*`, not the bare prefix —
+  // wipeLocalStores() enumerates and deletes the actual names.
+  await wipeLocalStores();
 }

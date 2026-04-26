@@ -108,12 +108,25 @@ function localpart(mxid: string): string {
 }
 
 // Some events flow through the SDK without a valid origin_server_ts (local
-// echo, malformed federated events). `new Date(undefined/NaN).toISOString()`
-// throws RangeError, which crashes the entire conversation snapshot mid-
-// render and leaves the screen blank.
+// echo, malformed federated events, microsecond/nanosecond clocks from buggy
+// bridges). `new Date(x).toISOString()` throws RangeError for non-finite
+// values *and* for finite values outside ±8.64e15 ms — and any throw from a
+// useSyncExternalStore snapshot getter unmounts the whole app to a blank
+// screen. Clamp into the valid Date range and catch as a final safety net.
+const MAX_DATE_MS = 8.64e15;
 function safeIso(ts: unknown): string {
-  const n = typeof ts === "number" && Number.isFinite(ts) ? ts : 0;
-  return new Date(n).toISOString();
+  let n =
+    typeof ts === "number" && Number.isFinite(ts)
+      ? ts
+      : typeof ts === "string" && ts.trim() !== "" && Number.isFinite(Number(ts))
+        ? Number(ts)
+        : 0;
+  if (n > MAX_DATE_MS || n < -MAX_DATE_MS) n = 0;
+  try {
+    return new Date(n).toISOString();
+  } catch {
+    return new Date(0).toISOString();
+  }
 }
 
 function monogramFor(name: string): string {
@@ -391,9 +404,18 @@ function getConversationsSnapshot(): Conversation[] {
   const client = getClient();
   if (!client) return EMPTY;
   const rooms = client.getRooms();
-  const out = rooms
-    .filter((r) => r.getMyMembership() === "join")
-    .map((r) => roomToConversation(client, r));
+  const out: Conversation[] = [];
+  for (const r of rooms) {
+    if (r.getMyMembership() !== "join") continue;
+    // A single malformed room shouldn't blank the entire inbox. If
+    // roomToConversation throws (bad event content, SDK quirk, etc.) we just
+    // skip the room — useSyncExternalStore would otherwise unmount the app.
+    try {
+      out.push(roomToConversation(client, r));
+    } catch (err) {
+      console.error("[hmail] failed to snapshot room", r.roomId, err);
+    }
+  }
   out.sort(
     (a, b) =>
       new Date(b.last_activity_ts).getTime() -
@@ -429,7 +451,16 @@ function snapshotFingerprint(convs: Conversation[]): string {
 }
 
 function getStableConversations(): Conversation[] {
-  const next = getConversationsSnapshot();
+  // Defence in depth: a throw out of this function unmounts the entire app
+  // (React unwinds the tree and we lose the inbox to a blank screen). Better
+  // to keep showing the last good snapshot — or an empty list — and log.
+  let next: Conversation[];
+  try {
+    next = getConversationsSnapshot();
+  } catch (err) {
+    console.error("[hmail] conversation snapshot failed", err);
+    return _cachedSnapshot;
+  }
   const fp = snapshotFingerprint(next);
   if (fp === _cachedFingerprint) return _cachedSnapshot;
   _cachedFingerprint = fp;
