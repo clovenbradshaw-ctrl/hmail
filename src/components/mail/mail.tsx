@@ -4,6 +4,7 @@ import { MailList } from "@/components/mail/mail-list";
 import { MailDisplay } from "@/components/mail/mail-display";
 import { Compose } from "@/components/mail/compose";
 import { ManageRooms } from "@/components/mail/manage-rooms";
+import { Profile } from "@/components/mail/profile";
 import { KeyboardHelp } from "@/components/mail/keyboard-help";
 import { useMailStore } from "@/hooks/use-mail";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
@@ -55,6 +56,7 @@ export function Mail() {
 
       <Compose />
       <ManageRooms />
+      <Profile />
       <KeyboardHelp />
     </TooltipProvider>
   );

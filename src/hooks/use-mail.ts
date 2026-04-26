@@ -11,6 +11,8 @@ interface MailState {
   setComposeOpen: (open: boolean) => void;
   manageRoomsOpen: boolean;
   setManageRoomsOpen: (open: boolean) => void;
+  profileOpen: boolean;
+  setProfileOpen: (open: boolean) => void;
   sidebarOpen: boolean;
   setSidebarOpen: (open: boolean) => void;
   helpOpen: boolean;
@@ -26,6 +28,8 @@ export const useMailStore = create<MailState>((set) => ({
   setComposeOpen: (composeOpen) => set({ composeOpen }),
   manageRoomsOpen: false,
   setManageRoomsOpen: (manageRoomsOpen) => set({ manageRoomsOpen }),
+  profileOpen: false,
+  setProfileOpen: (profileOpen) => set({ profileOpen }),
   sidebarOpen: false,
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   helpOpen: false,

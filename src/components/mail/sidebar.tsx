@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { useMailStore } from "@/hooks/use-mail";
 import { useConversations, useMyMxid } from "@/lib/rooms";
+import { useMyDisplayName } from "@/lib/profile";
 import { logout } from "@/lib/matrix";
 
 interface NavItem {
@@ -26,10 +27,12 @@ interface NavItem {
 export function Sidebar() {
   const conversations = useConversations();
   const myMxid = useMyMxid();
+  const myDisplayName = useMyDisplayName();
   const folder = useMailStore((s) => s.folder);
   const setFolder = useMailStore((s) => s.setFolder);
   const setComposeOpen = useMailStore((s) => s.setComposeOpen);
   const setManageRoomsOpen = useMailStore((s) => s.setManageRoomsOpen);
+  const setProfileOpen = useMailStore((s) => s.setProfileOpen);
   const setSidebarOpen = useMailStore((s) => s.setSidebarOpen);
 
   const inboxUnread = conversations.filter((c) => !c.archived && c.unread).length;
@@ -54,19 +57,29 @@ export function Sidebar() {
 
   return (
     <div className="flex h-full flex-col bg-surface">
-      {/* Brand */}
-      <div className="flex items-center gap-2 px-5 py-4">
+      {/* Brand + identity (click to edit name) */}
+      <button
+        type="button"
+        onClick={() => {
+          setProfileOpen(true);
+          setSidebarOpen(false);
+        }}
+        className="flex items-center gap-2 px-5 py-4 text-left transition hover:bg-accent"
+        aria-label="Edit your profile"
+      >
         <div className="flex h-7 w-7 items-center justify-center rounded bg-seal text-seal-foreground">
           <span className="font-display text-sm font-bold italic">h</span>
         </div>
         <div className="flex min-w-0 flex-col leading-tight">
-          <span className="text-sm font-semibold tracking-tight">hmail</span>
+          <span className="truncate text-sm font-semibold tracking-tight">
+            {myDisplayName || "Set your name"}
+          </span>
           <span className="truncate font-mono text-[10px] text-muted-foreground">
             @{localpart}
             {domain && <>:{domain}</>}
           </span>
         </div>
-      </div>
+      </button>
 
       {/* Compose */}
       <div className="px-4 pb-4">
