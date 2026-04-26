@@ -4,83 +4,91 @@
 
 @layer base {
   /*
-   * hmail design tokens.
-   *
-   * The aesthetic is paper + ink. Off-white warm cream backgrounds, deep iron-gall
-   * text rather than pure black, a wax-seal red for unread / status moments,
-   * and a single restrained accent for selection states. Avoid the generic
-   * white/blue dashboard look. Closer to a literary journal than a SaaS app.
+   * hmail design tokens — Gmail-flavored.
+   * White surfaces, soft gray sidebar, Google-blue accents,
+   * Gmail-red for unread / important moments.
    */
   :root {
-    /* Paper. Warm cream, not white. */
-    --background: 36 33% 96%;
-    --foreground: 25 18% 14%;
+    --background: 0 0% 100%;
+    --foreground: 220 9% 13%;
 
-    --card: 36 33% 98%;
-    --card-foreground: 25 18% 14%;
+    --card: 0 0% 100%;
+    --card-foreground: 220 9% 13%;
 
-    --popover: 36 30% 98%;
-    --popover-foreground: 25 18% 14%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 9% 13%;
 
-    /* Ink. Iron-gall, not pure black. */
-    --primary: 25 22% 18%;
-    --primary-foreground: 36 33% 96%;
+    /* Surrounding chrome (sidebar / toolbars). */
+    --surface: 220 23% 97%;
 
-    --secondary: 36 22% 90%;
-    --secondary-foreground: 25 18% 20%;
+    /* Primary = Google blue. Used for selected states + buttons. */
+    --primary: 217 89% 43%;
+    --primary-foreground: 0 0% 100%;
 
-    --muted: 36 22% 92%;
-    --muted-foreground: 25 12% 38%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 220 9% 13%;
 
-    --accent: 36 22% 88%;
-    --accent-foreground: 25 18% 18%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 6% 39%;
 
-    /* Wax seal. For unread indicators and important status. */
-    --seal: 8 56% 42%;
-    --seal-foreground: 36 33% 96%;
+    /* Hover. Light gray, very Gmail. */
+    --accent: 220 14% 95%;
+    --accent-foreground: 220 9% 13%;
 
-    --destructive: 0 62% 38%;
-    --destructive-foreground: 36 33% 96%;
+    /* Selected row tint = Gmail's #D3E3FD blueish. */
+    --selected: 217 90% 91%;
+    --selected-foreground: 217 89% 22%;
 
-    --border: 30 18% 84%;
-    --input: 30 18% 84%;
-    --ring: 25 22% 28%;
+    /* Gmail red — the icon color. Use sparingly for unread + important. */
+    --seal: 4 75% 49%;
+    --seal-foreground: 0 0% 100%;
 
-    --radius: 0.4rem;
+    --destructive: 4 75% 49%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 220 5% 86%;
+    --input: 220 5% 86%;
+    --ring: 217 89% 43%;
+
+    --radius: 0.6rem;
   }
 
   .dark {
-    /* Inverted, but warm. Charcoal paper, not slate. */
-    --background: 25 12% 9%;
-    --foreground: 36 22% 92%;
+    --background: 220 9% 11%;
+    --foreground: 220 14% 92%;
 
-    --card: 25 12% 11%;
-    --card-foreground: 36 22% 92%;
+    --card: 220 9% 13%;
+    --card-foreground: 220 14% 92%;
 
-    --popover: 25 12% 11%;
-    --popover-foreground: 36 22% 92%;
+    --popover: 220 9% 13%;
+    --popover-foreground: 220 14% 92%;
 
-    --primary: 36 22% 92%;
-    --primary-foreground: 25 12% 9%;
+    --surface: 220 9% 14%;
 
-    --secondary: 25 8% 18%;
-    --secondary-foreground: 36 22% 90%;
+    --primary: 217 89% 65%;
+    --primary-foreground: 220 9% 11%;
 
-    --muted: 25 8% 16%;
-    --muted-foreground: 36 12% 62%;
+    --secondary: 220 9% 18%;
+    --secondary-foreground: 220 14% 90%;
 
-    --accent: 25 8% 20%;
-    --accent-foreground: 36 22% 92%;
+    --muted: 220 9% 18%;
+    --muted-foreground: 220 8% 64%;
 
-    --seal: 8 60% 56%;
-    --seal-foreground: 25 12% 9%;
+    --accent: 220 9% 22%;
+    --accent-foreground: 220 14% 92%;
 
-    --destructive: 0 62% 50%;
-    --destructive-foreground: 36 22% 92%;
+    --selected: 217 60% 26%;
+    --selected-foreground: 217 90% 88%;
 
-    --border: 25 6% 22%;
-    --input: 25 6% 22%;
-    --ring: 36 22% 70%;
+    --seal: 4 70% 60%;
+    --seal-foreground: 220 9% 11%;
+
+    --destructive: 4 70% 60%;
+    --destructive-foreground: 220 9% 11%;
+
+    --border: 220 6% 24%;
+    --input: 220 6% 24%;
+    --ring: 217 89% 65%;
   }
 
   * {
@@ -89,23 +97,23 @@
 
   body {
     @apply bg-background text-foreground;
-    font-feature-settings: "ss01", "ss02", "kern";
-  }
-
-  /* Use Fraunces' opsz axis for headings/displays where it shines. */
-  h1, h2, h3, h4, .font-display {
-    font-optical-sizing: auto;
+    font-feature-settings: "kern";
   }
 }
 
 @layer utilities {
-  /* Subtle grain to make the cream feel like paper, not flat color. */
+  /* No-op now — kept so older references don't break. */
   .paper-grain {
-    background-image:
-      radial-gradient(
-        rgba(58, 39, 22, 0.03) 1px,
-        transparent 1px
-      );
-    background-size: 3px 3px;
+    background-color: hsl(var(--surface));
+  }
+
+  /* Hide scrollbars on mobile drawers without breaking scroll. */
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 3px;
   }
 }

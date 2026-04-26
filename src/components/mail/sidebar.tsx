@@ -8,6 +8,7 @@ import {
   Tag,
   PenLine,
   LogOut,
+  ListChecks,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -29,10 +30,11 @@ export function Sidebar() {
   const myMxid = useMyMxid();
   const folder = useMailStore((s) => s.folder);
   const setFolder = useMailStore((s) => s.setFolder);
+  const setComposeOpen = useMailStore((s) => s.setComposeOpen);
+  const setManageRoomsOpen = useMailStore((s) => s.setManageRoomsOpen);
+  const setSidebarOpen = useMailStore((s) => s.setSidebarOpen);
 
-  const inboxUnread = conversations.filter(
-    (c) => !c.archived && c.unread,
-  ).length;
+  const inboxUnread = conversations.filter((c) => !c.archived && c.unread).length;
   const starredCount = conversations.filter((c) => c.starred).length;
   const archivedCount = conversations.filter((c) => c.archived).length;
 
@@ -53,15 +55,13 @@ export function Sidebar() {
   const domain = myMxid?.match(/:(.+)$/)?.[1] ?? "";
 
   return (
-    <div className="flex h-full flex-col bg-background paper-grain">
+    <div className="flex h-full flex-col bg-surface">
       <div className="flex items-center gap-2 px-4 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <span className="font-display text-base font-medium italic">h</span>
+        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-seal text-seal-foreground">
+          <span className="font-display text-base font-bold italic">h</span>
         </div>
         <div className="flex min-w-0 flex-col">
-          <span className="font-display text-sm font-medium leading-tight">
-            hmail
-          </span>
+          <span className="text-sm font-semibold leading-tight tracking-tight">hmail</span>
           <span className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
             @{localpart}
             {domain && <>:{domain}</>}
@@ -69,16 +69,17 @@ export function Sidebar() {
         </div>
       </div>
 
-      <Separator />
-
-      <div className="px-3 py-3">
+      <div className="px-3 pb-3 pt-1">
         <Button
-          className="w-full justify-start gap-2 font-medium"
-          size="sm"
-          disabled
+          onClick={() => {
+            setComposeOpen(true);
+            setSidebarOpen(false);
+          }}
+          className="w-full justify-start gap-3 rounded-2xl bg-primary px-4 text-base font-medium shadow-sm hover:bg-primary/90"
+          size="lg"
         >
-          <PenLine className="h-4 w-4" />
-          Compose · Stage 2
+          <PenLine className="h-5 w-5" />
+          Compose
         </Button>
       </div>
 
@@ -88,15 +89,21 @@ export function Sidebar() {
           return (
             <button
               key={item.label}
-              onClick={() => item.folder && setFolder(item.folder)}
+              onClick={() => {
+                if (item.folder) {
+                  setFolder(item.folder);
+                  setSidebarOpen(false);
+                }
+              }}
               disabled={item.disabled}
               className={cn(
-                "flex w-full items-center justify-between rounded-md px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent",
-                active && "bg-accent text-accent-foreground",
-                item.disabled && "opacity-50 hover:bg-transparent",
+                "flex w-full items-center justify-between rounded-r-full px-4 py-2 text-sm font-medium transition-colors",
+                "hover:bg-accent",
+                active && "bg-selected text-selected-foreground hover:bg-selected",
+                item.disabled && "opacity-40 hover:bg-transparent",
               )}
             >
-              <span className="flex items-center gap-3">
+              <span className="flex items-center gap-4">
                 <item.icon className="h-4 w-4 shrink-0" />
                 <span>{item.label}</span>
               </span>
@@ -104,7 +111,7 @@ export function Sidebar() {
                 <span
                   className={cn(
                     "font-mono text-[11px]",
-                    active ? "text-foreground" : "text-muted-foreground",
+                    active ? "text-selected-foreground" : "text-muted-foreground",
                   )}
                 >
                   {item.count}
@@ -113,20 +120,30 @@ export function Sidebar() {
             </button>
           );
         })}
+        <button
+          onClick={() => {
+            setManageRoomsOpen(true);
+            setSidebarOpen(false);
+          }}
+          className="mt-1 flex w-full items-center gap-4 rounded-r-full px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <ListChecks className="h-4 w-4 shrink-0" />
+          <span>Manage rooms…</span>
+        </button>
       </nav>
 
       {tags.length > 0 && (
         <>
           <Separator className="my-3" />
           <div className="px-2">
-            <div className="mb-1 px-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+            <div className="mb-1 px-4 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
               Tags
             </div>
             {tags.map((tag) => (
               <button
                 key={tag}
                 disabled
-                className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-sm transition-colors hover:bg-accent"
+                className="flex w-full items-center gap-4 rounded-r-full px-4 py-1.5 text-sm transition-colors hover:bg-accent"
               >
                 <Tag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 <span className="text-muted-foreground">{tag}</span>
@@ -142,7 +159,7 @@ export function Sidebar() {
       <div className="p-2">
         <button
           onClick={() => void logout()}
-          className="flex w-full items-center gap-3 rounded-md px-3 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent"
+          className="flex w-full items-center gap-4 rounded-r-full px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
         >
           <LogOut className="h-3.5 w-3.5" />
           <span>Sign out</span>
