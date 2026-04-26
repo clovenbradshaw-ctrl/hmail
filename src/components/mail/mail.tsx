@@ -2,6 +2,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sidebar } from "@/components/mail/sidebar";
 import { MailList } from "@/components/mail/mail-list";
 import { MailDisplay } from "@/components/mail/mail-display";
+import { MediaStore } from "@/components/mail/media-store";
 import { Compose } from "@/components/mail/compose";
 import { ManageRooms } from "@/components/mail/manage-rooms";
 import { Profile } from "@/components/mail/profile";
@@ -12,9 +13,18 @@ import { cn } from "@/lib/utils";
 
 export function Mail() {
   const selectedRoomId = useMailStore((s) => s.selectedRoomId);
+  const folder = useMailStore((s) => s.folder);
   const sidebarOpen = useMailStore((s) => s.sidebarOpen);
   const setSidebarOpen = useMailStore((s) => s.setSidebarOpen);
   useKeyboardShortcuts();
+
+  const main = selectedRoomId ? (
+    <MailDisplay />
+  ) : folder === "media" ? (
+    <MediaStore />
+  ) : (
+    <MailList />
+  );
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -23,15 +33,11 @@ export function Mail() {
         <aside className="w-60 shrink-0 border-r border-border bg-surface">
           <Sidebar />
         </aside>
-        <main className="flex-1 min-w-0 bg-background">
-          {selectedRoomId ? <MailDisplay /> : <MailList />}
-        </main>
+        <main className="flex-1 min-w-0 bg-background">{main}</main>
       </div>
 
       {/* Mobile: single-pane navigation */}
-      <div className="flex h-screen flex-col md:hidden">
-        {selectedRoomId ? <MailDisplay /> : <MailList />}
-      </div>
+      <div className="flex h-screen flex-col md:hidden">{main}</div>
 
       {/* Mobile sidebar drawer */}
       <div

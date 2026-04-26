@@ -14,6 +14,7 @@ import {
   composeNewConversation,
   generateConfirmationCode,
   searchUsers,
+  sendAttachment,
   sendConfirmationRequest,
   useKnownContacts,
   type UserSearchResult,
@@ -57,12 +58,14 @@ export function Compose() {
   const [to, setTo] = useState("");
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [directoryHits, setDirectoryHits] = useState<UserSearchResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [windowState, setWindowState] = useState<WindowState>("normal");
   const debounceRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Post-send confirmation share state.
   const [shareCode, setShareCode] = useState<string | null>(null);
@@ -98,6 +101,7 @@ export function Compose() {
       setTo("");
       setSubject("");
       setBody("");
+      setFiles([]);
       setBusy(false);
       setError(null);
       setDirectoryHits([]);
@@ -123,7 +127,7 @@ export function Compose() {
   function discard() {
     if (busy) return;
     if (
-      (to || subject || body) &&
+      (to || subject || body || files.length > 0) &&
       !window.confirm("Discard this draft?")
     )
       return;
@@ -144,6 +148,12 @@ export function Compose() {
         to: trimmed,
         body,
       });
+      // Upload attachments after the room exists. We pass the recipient list
+      // explicitly: the invitee won't have a "join" membership yet, so the
+      // implicit grant computation in sendAttachment can't see them.
+      for (const f of files) {
+        await sendAttachment(roomId, f, [trimmed]);
+      }
       const code = generateConfirmationCode(6);
       try {
         await sendConfirmationRequest(roomId, code);
@@ -359,6 +369,30 @@ export function Compose() {
                 disabled={busy}
                 className="w-full flex-1 resize-none bg-transparent py-1 text-sm placeholder:text-muted-foreground/60 focus:outline-none"
               />
+              {files.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 pb-2">
+                  {files.map((f, i) => (
+                    <span
+                      key={`${f.name}-${i}`}
+                      className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-xs"
+                    >
+                      <Paperclip className="h-3 w-3 text-muted-foreground" />
+                      <span className="max-w-[16ch] truncate">{f.name}</span>
+                      <button
+                        type="button"
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() =>
+                          setFiles(files.filter((_, j) => j !== i))
+                        }
+                        aria-label="Remove attachment"
+                        disabled={busy}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               {error && (
                 <div className="mb-2 rounded border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                   {error}
@@ -376,11 +410,23 @@ export function Compose() {
                 >
                   {busy ? "Sending…" : "Send"}
                 </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  hidden
+                  onChange={(e) => {
+                    const list = Array.from(e.target.files ?? []);
+                    if (list.length) setFiles((prev) => [...prev, ...list]);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}
+                />
                 <button
                   type="button"
-                  disabled
-                  aria-label="Attach (soon)"
-                  className="rounded-full p-2 text-muted-foreground/50"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={busy}
+                  aria-label="Attach files"
+                  className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
                 >
                   <Paperclip className="h-4 w-4" />
                 </button>

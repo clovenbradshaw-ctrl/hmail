@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-type Folder = "inbox" | "starred" | "archive";
+type Folder = "inbox" | "starred" | "archive" | "media";
 
 interface MailState {
   selectedRoomId: string | null;

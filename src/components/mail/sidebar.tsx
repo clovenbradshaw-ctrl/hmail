@@ -8,6 +8,7 @@ import {
   Tag,
   LogOut,
   ListChecks,
+  Paperclip,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
@@ -20,7 +21,7 @@ interface NavItem {
   label: string;
   icon: typeof Inbox;
   count?: number;
-  folder?: "inbox" | "starred" | "archive";
+  folder?: "inbox" | "starred" | "archive" | "media";
   disabled?: boolean;
 }
 
@@ -38,6 +39,11 @@ export function Sidebar() {
   const inboxUnread = conversations.filter((c) => !c.archived && c.unread).length;
   const starredCount = conversations.filter((c) => c.starred).length;
   const archivedCount = conversations.filter((c) => c.archived).length;
+  const mediaCount = conversations.reduce(
+    (acc, c) =>
+      acc + c.messages.filter((m) => !!m.attachment && !m.redacted).length,
+    0,
+  );
 
   const items: NavItem[] = [
     { label: "Inbox", icon: Inbox, count: inboxUnread, folder: "inbox" },
@@ -45,6 +51,7 @@ export function Sidebar() {
     { label: "Sent", icon: Send, disabled: true },
     { label: "Drafts", icon: FileText, disabled: true },
     { label: "Archive", icon: Archive, count: archivedCount, folder: "archive" },
+    { label: "Media", icon: Paperclip, count: mediaCount, folder: "media" },
     { label: "Trash", icon: Trash2, disabled: true },
   ];
 

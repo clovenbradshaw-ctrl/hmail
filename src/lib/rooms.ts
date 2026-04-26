@@ -31,13 +31,35 @@ export interface EditEntry {
   ts: string;
 }
 
+/**
+ * Sender-asserted record of who was granted view access to an attachment at
+ * send time. This is *intent*, not enforcement — the room-level membership ACL
+ * is the authoritative gate. Mirrors the way Gmail surfaces "who has access"
+ * on a Drive attachment: we render this list so the sender can see and audit
+ * exactly who they handed the file to.
+ */
+export interface AttachmentAccess {
+  /** MXID of the user who uploaded the file. */
+  owner: string;
+  /** MXIDs that were explicitly granted view access. */
+  granted: string[];
+  /** ISO timestamp the grant was recorded. */
+  granted_ts: string;
+}
+
 export interface Attachment {
   kind: "image" | "file";
+  /** HTTP URL for display, resolved from mxc:// at parse time. */
   url: string | null;
+  /** Raw mxc:// URI — kept so future revocation can target the media. */
+  mxc?: string;
   name: string;
   mimetype?: string;
   size?: number;
+  access?: AttachmentAccess;
 }
+
+export const MEDIA_ACCESS_KEY = "social.hyphae.media.access";
 
 export interface Message {
   event_id: string;
@@ -230,12 +252,35 @@ function eventToMessage(
   let attachment: Attachment | undefined;
   if (!ev.isRedacted() && (msgtype === MsgType.Image || msgtype === MsgType.File)) {
     const info = (content?.info ?? {}) as { mimetype?: string; size?: number };
+    const mxc = typeof content?.url === "string" ? (content.url as string) : undefined;
+    const accessRaw = content?.[MEDIA_ACCESS_KEY] as
+      | Record<string, unknown>
+      | undefined;
+    let access: AttachmentAccess | undefined;
+    if (
+      accessRaw &&
+      typeof accessRaw.owner === "string" &&
+      Array.isArray(accessRaw.granted)
+    ) {
+      access = {
+        owner: accessRaw.owner,
+        granted: (accessRaw.granted as unknown[]).filter(
+          (x): x is string => typeof x === "string",
+        ),
+        granted_ts:
+          typeof accessRaw.granted_ts === "string"
+            ? accessRaw.granted_ts
+            : new Date(ev.getTs()).toISOString(),
+      };
+    }
     attachment = {
       kind: msgtype === MsgType.Image ? "image" : "file",
-      url: typeof content?.url === "string" ? mxcToHttp(content.url as string) : null,
+      url: mxc ? mxcToHttp(mxc) : null,
+      mxc,
       name: typeof content?.body === "string" ? (content.body as string) : "attachment",
       mimetype: info.mimetype,
       size: info.size,
+      access,
     };
   }
   return {
@@ -655,24 +700,57 @@ export async function retractMessage(roomId: string, eventId: string) {
   await client.redactEvent(roomId, eventId, undefined, { reason: "retracted" });
 }
 
-export async function sendAttachment(roomId: string, file: File) {
+/**
+ * Compute the implicit grant list for a room: every joined or invited member
+ * other than the uploader. Used when sendAttachment is called without an
+ * explicit `granted` argument (e.g. attaching to an existing thread).
+ */
+function impliedGrantList(client: MatrixClient, roomId: string): string[] {
+  const room = client.getRoom(roomId);
+  if (!room) return [];
+  const owner = client.getUserId();
+  const out = new Set<string>();
+  for (const m of room.getJoinedMembers()) {
+    if (m.userId !== owner) out.add(m.userId);
+  }
+  try {
+    const invited = room.currentState
+      .getMembers()
+      .filter((m) => m.membership === "invite" && m.userId !== owner);
+    for (const m of invited) out.add(m.userId);
+  } catch {
+    /* membership state may not be loaded yet — joined list is enough */
+  }
+  return Array.from(out);
+}
+
+export async function sendAttachment(
+  roomId: string,
+  file: File,
+  granted?: string[],
+) {
   const client = getClient();
   if (!client) throw new Error("Not signed in.");
   const upload = await client.uploadContent(file, { type: file.type });
   const isImage = file.type.startsWith("image/");
+  const owner = client.getUserId() ?? "";
+  const grantedList = (granted ?? impliedGrantList(client, roomId)).filter(
+    (mxid) => mxid !== owner,
+  );
+  const access: AttachmentAccess = {
+    owner,
+    granted: grantedList,
+    granted_ts: new Date().toISOString(),
+  };
+  const baseContent = {
+    body: file.name,
+    url: upload.content_uri,
+    info: { mimetype: file.type, size: file.size },
+    [MEDIA_ACCESS_KEY]: access,
+  };
   const content = isImage
-    ? {
-        msgtype: MsgType.Image,
-        body: file.name,
-        url: upload.content_uri,
-        info: { mimetype: file.type, size: file.size },
-      }
-    : {
-        msgtype: MsgType.File,
-        body: file.name,
-        url: upload.content_uri,
-        info: { mimetype: file.type, size: file.size },
-      };
+    ? { msgtype: MsgType.Image, ...baseContent }
+    : { msgtype: MsgType.File, ...baseContent };
   type SendMsgFn = (roomId: string, content: unknown) => Promise<unknown>;
   await (client.sendMessage as unknown as SendMsgFn)(roomId, content);
 }
