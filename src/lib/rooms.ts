@@ -819,17 +819,42 @@ export function getConfirmState(client: MatrixClient, room: Room): ConfirmState 
   };
 }
 
+// useSyncExternalStore requires a referentially stable snapshot when the
+// underlying state hasn't changed; otherwise React re-renders in a loop
+// (React error #185). Cache by room id with a fingerprint over the fields.
+const _confirmCache = new Map<string, { fp: string; state: ConfirmState }>();
+
+function confirmFingerprint(s: ConfirmState): string {
+  return [
+    s.status,
+    s.myRole ?? "",
+    s.counterpartyMxid ?? "",
+    s.request?.event_id ?? "",
+    s.request?.sender ?? "",
+    s.request?.ts ?? "",
+    s.request?.code_hash ?? "",
+    s.proof?.sender ?? "",
+    s.proof?.ts ?? "",
+  ].join("|");
+}
+
+function getStableConfirmState(roomId: string): ConfirmState | null {
+  const client = getClient();
+  if (!client) return null;
+  const room = client.getRoom(roomId);
+  if (!room) return null;
+  const next = getConfirmState(client, room);
+  const fp = confirmFingerprint(next);
+  const cached = _confirmCache.get(roomId);
+  if (cached && cached.fp === fp) return cached.state;
+  _confirmCache.set(roomId, { fp, state: next });
+  return next;
+}
+
 export function useConfirmState(roomId: string | null): ConfirmState | null {
   return useSyncExternalStore(
     subscribe,
-    () => {
-      if (!roomId) return null;
-      const client = getClient();
-      if (!client) return null;
-      const room = client.getRoom(roomId);
-      if (!room) return null;
-      return getConfirmState(client, room);
-    },
+    () => (roomId ? getStableConfirmState(roomId) : null),
     () => null,
   );
 }
