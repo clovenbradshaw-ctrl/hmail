@@ -31,6 +31,14 @@ export interface EditEntry {
   ts: string;
 }
 
+export interface Attachment {
+  kind: "image" | "file";
+  url: string | null;
+  name: string;
+  mimetype?: string;
+  size?: number;
+}
+
 export interface Message {
   event_id: string;
   sender: Sender;
@@ -51,6 +59,7 @@ export interface Message {
   edits: EditEntry[];
   /** Whether the current user authored this message. */
   is_mine: boolean;
+  attachment?: Attachment;
 }
 
 export interface Conversation {
@@ -216,6 +225,19 @@ function eventToMessage(
   const isThreadReply = relation?.rel_type === RelationType.Thread;
   const myUserId = client.getUserId();
   const edits = editsFor(room, ev);
+  const content = ev.getContent() as Record<string, unknown> | undefined;
+  const msgtype = content?.msgtype as string | undefined;
+  let attachment: Attachment | undefined;
+  if (!ev.isRedacted() && (msgtype === MsgType.Image || msgtype === MsgType.File)) {
+    const info = (content?.info ?? {}) as { mimetype?: string; size?: number };
+    attachment = {
+      kind: msgtype === MsgType.Image ? "image" : "file",
+      url: typeof content?.url === "string" ? mxcToHttp(content.url as string) : null,
+      name: typeof content?.body === "string" ? (content.body as string) : "attachment",
+      mimetype: info.mimetype,
+      size: info.size,
+    };
+  }
   return {
     event_id: ev.getId() ?? `${ev.getTs()}`,
     sender: senderFor(client, room, senderMxid),
@@ -230,6 +252,7 @@ function eventToMessage(
     reactions: reactionsFor(client, room, ev),
     edits,
     is_mine: senderMxid === myUserId,
+    attachment,
   };
 }
 
@@ -474,6 +497,55 @@ export async function searchUsers(query: string): Promise<UserSearchResult[]> {
   }
 }
 
+/**
+ * Everyone the current user shares a joined room with — i.e. everyone they've
+ * communicated with via Matrix. Deduped by MXID, sorted by display name.
+ */
+export function getKnownContacts(): UserSearchResult[] {
+  const client = getClient();
+  if (!client) return [];
+  const myUserId = client.getUserId();
+  const seen = new Map<string, UserSearchResult>();
+  for (const room of client.getRooms()) {
+    if (room.getMyMembership() !== "join") continue;
+    for (const member of room.getJoinedMembers()) {
+      if (member.userId === myUserId) continue;
+      if (seen.has(member.userId)) continue;
+      seen.set(member.userId, {
+        user_id: member.userId,
+        display_name: member.name || member.rawDisplayName || undefined,
+      });
+    }
+  }
+  const arr = Array.from(seen.values());
+  arr.sort((a, b) =>
+    (a.display_name ?? a.user_id).localeCompare(b.display_name ?? b.user_id),
+  );
+  return arr;
+}
+
+/**
+ * Reactive hook: known contacts, refreshing on sync events.
+ */
+export function useKnownContacts(): UserSearchResult[] {
+  return useSyncExternalStore(
+    subscribe,
+    () => {
+      const next = getKnownContacts();
+      const fp = next.map((c) => c.user_id).join(",");
+      if (fp === _knownContactsFingerprint) return _knownContactsCache;
+      _knownContactsFingerprint = fp;
+      _knownContactsCache = next;
+      return next;
+    },
+    () => EMPTY_CONTACTS,
+  );
+}
+
+const EMPTY_CONTACTS: UserSearchResult[] = [];
+let _knownContactsCache: UserSearchResult[] = EMPTY_CONTACTS;
+let _knownContactsFingerprint = "";
+
 export async function composeNewConversation(opts: {
   subject: string;
   to: string;
@@ -578,6 +650,240 @@ export async function retractMessage(roomId: string, eventId: string) {
   const client = getClient();
   if (!client) throw new Error("Not signed in.");
   await client.redactEvent(roomId, eventId, undefined, { reason: "retracted" });
+}
+
+export async function sendAttachment(roomId: string, file: File) {
+  const client = getClient();
+  if (!client) throw new Error("Not signed in.");
+  const upload = await client.uploadContent(file, { type: file.type });
+  const isImage = file.type.startsWith("image/");
+  const content = isImage
+    ? {
+        msgtype: MsgType.Image,
+        body: file.name,
+        url: upload.content_uri,
+        info: { mimetype: file.type, size: file.size },
+      }
+    : {
+        msgtype: MsgType.File,
+        body: file.name,
+        url: upload.content_uri,
+        info: { mimetype: file.type, size: file.size },
+      };
+  type SendMsgFn = (roomId: string, content: unknown) => Promise<unknown>;
+  await (client.sendMessage as unknown as SendMsgFn)(roomId, content);
+}
+
+export function mxcToHttp(mxc: string | undefined): string | null {
+  const client = getClient();
+  if (!client || !mxc) return null;
+  try {
+    return client.mxcUrlToHttp(mxc, undefined, undefined, undefined, true, false, true);
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// User confirmation (side-channel proof)
+// ---------------------------------------------------------------------------
+
+export const CONFIRM_EVENT_TYPE = "social.hyphae.hmail.confirm";
+
+const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O 1/I, uppercase
+
+export function generateConfirmationCode(length = 6): string {
+  const buf = new Uint32Array(length);
+  crypto.getRandomValues(buf);
+  let out = "";
+  for (let i = 0; i < length; i++) {
+    out += CODE_ALPHABET[buf[i] % CODE_ALPHABET.length];
+  }
+  return out;
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const data = new TextEncoder().encode(text);
+  const buf = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export type ConfirmKind = "request" | "proof";
+
+export interface ConfirmRequest {
+  kind: "request";
+  code_hash: string;
+  ts: number;
+}
+
+export interface ConfirmProof {
+  kind: "proof";
+  ts: number;
+  /** event_id of the request being proven. */
+  for: string;
+}
+
+export interface ConfirmState {
+  status: "none" | "awaiting_them" | "awaiting_me" | "verified";
+  myRole: "requester" | "verifier" | null;
+  /** The MXID we're either asking to confirm or being asked to confirm to. */
+  counterpartyMxid: string | null;
+  /** The active request event, if any. */
+  request: { event_id: string; sender: string; ts: string; code_hash: string } | null;
+  /** The matching proof, if any. */
+  proof: { sender: string; ts: string } | null;
+}
+
+export function getConfirmState(client: MatrixClient, room: Room): ConfirmState {
+  const myUserId = client.getUserId();
+  const events = room.getLiveTimeline().getEvents();
+  // Find latest request event (timeline order ascending; iterate in reverse).
+  let request: ConfirmState["request"] = null;
+  let requestEventId: string | null = null;
+  let requestSender: string | null = null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    if (ev.getType() !== CONFIRM_EVENT_TYPE) continue;
+    const c = ev.getContent() as Partial<ConfirmRequest | ConfirmProof>;
+    if (c?.kind === "request" && typeof c.code_hash === "string") {
+      request = {
+        event_id: ev.getId() ?? "",
+        sender: ev.getSender() ?? "",
+        ts: new Date(ev.getTs()).toISOString(),
+        code_hash: c.code_hash,
+      };
+      requestEventId = request.event_id;
+      requestSender = request.sender;
+      break;
+    }
+  }
+  let proof: ConfirmState["proof"] = null;
+  if (requestEventId) {
+    for (const ev of events) {
+      if (ev.getType() !== CONFIRM_EVENT_TYPE) continue;
+      const c = ev.getContent() as Partial<ConfirmRequest | ConfirmProof>;
+      if (c?.kind === "proof" && c.for === requestEventId) {
+        proof = {
+          sender: ev.getSender() ?? "",
+          ts: new Date(ev.getTs()).toISOString(),
+        };
+        break;
+      }
+    }
+  }
+
+  if (!request) {
+    return {
+      status: "none",
+      myRole: null,
+      counterpartyMxid: null,
+      request: null,
+      proof: null,
+    };
+  }
+  if (proof) {
+    return {
+      status: "verified",
+      myRole: requestSender === myUserId ? "requester" : "verifier",
+      counterpartyMxid:
+        requestSender === myUserId ? proof.sender : (requestSender ?? null),
+      request,
+      proof,
+    };
+  }
+  if (requestSender === myUserId) {
+    // I sent the code, awaiting their proof. Counterparty: anyone joined who isn't me.
+    const others = room
+      .getJoinedMembers()
+      .filter((m) => m.userId !== myUserId)
+      .map((m) => m.userId);
+    return {
+      status: "awaiting_them",
+      myRole: "requester",
+      counterpartyMxid: others[0] ?? null,
+      request,
+      proof: null,
+    };
+  }
+  return {
+    status: "awaiting_me",
+    myRole: "verifier",
+    counterpartyMxid: requestSender,
+    request,
+    proof: null,
+  };
+}
+
+export function useConfirmState(roomId: string | null): ConfirmState | null {
+  return useSyncExternalStore(
+    subscribe,
+    () => {
+      if (!roomId) return null;
+      const client = getClient();
+      if (!client) return null;
+      const room = client.getRoom(roomId);
+      if (!room) return null;
+      return getConfirmState(client, room);
+    },
+    () => null,
+  );
+}
+
+/** Sender side: hash the code and post a request event. Returns the code hash. */
+export async function sendConfirmationRequest(
+  roomId: string,
+  code: string,
+): Promise<string> {
+  const client = getClient();
+  if (!client) throw new Error("Not signed in.");
+  const code_hash = await sha256Hex(code.trim().toUpperCase());
+  const content: ConfirmRequest = {
+    kind: "request",
+    code_hash,
+    ts: Date.now(),
+  };
+  await (
+    client.sendEvent as unknown as (
+      roomId: string,
+      type: string,
+      content: unknown,
+    ) => Promise<unknown>
+  )(roomId, CONFIRM_EVENT_TYPE, content);
+  return code_hash;
+}
+
+/**
+ * Recipient side: verify the entered code matches the active request hash.
+ * If it does, post a proof event. Returns true on success.
+ */
+export async function submitConfirmationCode(
+  roomId: string,
+  code: string,
+): Promise<boolean> {
+  const client = getClient();
+  if (!client) throw new Error("Not signed in.");
+  const room = client.getRoom(roomId);
+  if (!room) throw new Error("Unknown room.");
+  const state = getConfirmState(client, room);
+  if (!state.request) throw new Error("No confirmation request in this room.");
+  if (state.status === "verified") return true;
+  const submitted = await sha256Hex(code.trim().toUpperCase());
+  if (submitted !== state.request.code_hash) return false;
+  const content: ConfirmProof = {
+    kind: "proof",
+    ts: Date.now(),
+    for: state.request.event_id,
+  };
+  await (
+    client.sendEvent as unknown as (
+      roomId: string,
+      type: string,
+      content: unknown,
+    ) => Promise<unknown>
+  )(roomId, CONFIRM_EVENT_TYPE, content);
+  return true;
 }
 
 export async function toggleReaction(

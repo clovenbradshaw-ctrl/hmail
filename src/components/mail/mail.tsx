@@ -1,9 +1,4 @@
 import { TooltipProvider } from "@/components/ui/tooltip";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@/components/ui/resizable";
 import { Sidebar } from "@/components/mail/sidebar";
 import { MailList } from "@/components/mail/mail-list";
 import { MailDisplay } from "@/components/mail/mail-display";
@@ -19,44 +14,28 @@ export function Mail() {
 
   return (
     <TooltipProvider delayDuration={200}>
-      {/* Desktop: three-pane resizable */}
-      <div className="hidden h-screen md:block">
-        <ResizablePanelGroup direction="horizontal" className="h-screen w-full items-stretch">
-          <ResizablePanel
-            defaultSize={16}
-            minSize={12}
-            maxSize={22}
-            collapsible
-            collapsedSize={4}
-            className="min-w-[180px]"
-          >
-            <Sidebar />
-          </ResizablePanel>
-          <ResizableHandle />
-          <ResizablePanel defaultSize={30} minSize={24} maxSize={40}>
-            <MailList />
-          </ResizablePanel>
-          <ResizableHandle />
-          <ResizablePanel defaultSize={54} minSize={30}>
-            <MailDisplay />
-          </ResizablePanel>
-        </ResizablePanelGroup>
+      {/* Desktop: fixed sidebar + main */}
+      <div className="hidden h-screen md:flex">
+        <aside className="w-60 shrink-0 border-r border-border bg-surface">
+          <Sidebar />
+        </aside>
+        <main className="flex-1 min-w-0 bg-background">
+          {selectedRoomId ? <MailDisplay /> : <MailList />}
+        </main>
       </div>
 
       {/* Mobile: single-pane navigation */}
       <div className="flex h-screen flex-col md:hidden">
-        {selectedRoomId ? (
-          <MailDisplay />
-        ) : (
-          <MailList />
-        )}
+        {selectedRoomId ? <MailDisplay /> : <MailList />}
       </div>
 
       {/* Mobile sidebar drawer */}
       <div
         className={cn(
           "fixed inset-0 z-40 transition-opacity md:hidden",
-          sidebarOpen ? "pointer-events-auto bg-black/30" : "pointer-events-none opacity-0",
+          sidebarOpen
+            ? "pointer-events-auto bg-black/30"
+            : "pointer-events-none opacity-0",
         )}
         onClick={() => setSidebarOpen(false)}
       >

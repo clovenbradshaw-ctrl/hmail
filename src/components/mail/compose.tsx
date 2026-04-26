@@ -1,13 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useMailStore } from "@/hooks/use-mail";
 import {
   composeNewConversation,
+  generateConfirmationCode,
   searchUsers,
+  sendConfirmationRequest,
+  useKnownContacts,
   type UserSearchResult,
 } from "@/lib/rooms";
+import { ShareCodeModal } from "@/components/mail/share-code-modal";
 
 export function Compose() {
   const open = useMailStore((s) => s.composeOpen);
@@ -19,8 +23,40 @@ export function Compose() {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<UserSearchResult[]>([]);
+  const [directoryHits, setDirectoryHits] = useState<UserSearchResult[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const debounceRef = useRef<number | null>(null);
+
+  // Post-send confirmation share state.
+  const [shareCode, setShareCode] = useState<string | null>(null);
+  const [shareRecipient, setShareRecipient] = useState<string>("");
+  const [shareOpen, setShareOpen] = useState(false);
+
+  const knownContacts = useKnownContacts();
+
+  // Combined suggestions: known contacts (already in your rooms) + directory hits.
+  // Filtered by the current `to` query.
+  const suggestions = useMemo(() => {
+    const q = to.trim().toLowerCase();
+    const known: (UserSearchResult & { source: "known" | "directory" })[] =
+      knownContacts.map((c) => ({ ...c, source: "known" as const }));
+    const dir: (UserSearchResult & { source: "known" | "directory" })[] =
+      directoryHits.map((c) => ({ ...c, source: "directory" as const }));
+    const seen = new Set<string>();
+    const merged: typeof known = [];
+    for (const list of [known, dir]) {
+      for (const c of list) {
+        if (seen.has(c.user_id)) continue;
+        if (q) {
+          const hay = `${c.display_name ?? ""} ${c.user_id}`.toLowerCase();
+          if (!hay.includes(q)) continue;
+        }
+        seen.add(c.user_id);
+        merged.push(c);
+      }
+    }
+    return merged.slice(0, 25);
+  }, [to, knownContacts, directoryHits]);
 
   useEffect(() => {
     if (!open) {
@@ -29,19 +65,20 @@ export function Compose() {
       setBody("");
       setBusy(false);
       setError(null);
-      setSuggestions([]);
+      setDirectoryHits([]);
+      setShowSuggestions(false);
     }
   }, [open]);
 
   useEffect(() => {
+    if (debounceRef.current) window.clearTimeout(debounceRef.current);
     if (!to || to.length < 2) {
-      setSuggestions([]);
+      setDirectoryHits([]);
       return;
     }
-    if (debounceRef.current) window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(() => {
-      void searchUsers(to).then(setSuggestions);
-    }, 200);
+      void searchUsers(to).then(setDirectoryHits);
+    }, 250);
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
@@ -61,7 +98,19 @@ export function Compose() {
         to: trimmed,
         body,
       });
+      // Generate + post the side-channel confirmation request, then surface
+      // the share sheet so the sender can hand it off via SMS / Signal /
+      // WhatsApp / email / etc.
+      const code = generateConfirmationCode(6);
+      try {
+        await sendConfirmationRequest(roomId, code);
+      } catch {
+        /* non-fatal — the banner will let them retry */
+      }
       setSelectedRoomId(roomId);
+      setShareCode(code);
+      setShareRecipient(trimmed);
+      setShareOpen(true);
       setOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -71,44 +120,83 @@ export function Compose() {
   }
 
   return (
+    <>
+    <ShareCodeModal
+      open={shareOpen}
+      onClose={() => setShareOpen(false)}
+      recipient={shareRecipient}
+      code={shareCode ?? ""}
+    />
     <Modal
       open={open}
       onClose={() => !busy && setOpen(false)}
       title="New conversation"
+      className="sm:max-w-xl"
     >
       <form onSubmit={onSend} className="flex flex-col gap-3 p-5">
         <label className="block">
           <span className="mb-1 block text-xs font-medium text-muted-foreground">
             To
           </span>
-          <Input
-            autoFocus
-            placeholder="@alice:matrix.org"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            disabled={busy}
-            className="font-mono text-sm"
-          />
-          {suggestions.length > 0 && (
-            <ul className="mt-1 max-h-40 overflow-y-auto rounded-md border border-border bg-popover">
-              {suggestions.map((u) => (
-                <li key={u.user_id}>
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left text-sm hover:bg-accent"
-                    onClick={() => {
-                      setTo(u.user_id);
-                      setSuggestions([]);
-                    }}
-                  >
-                    <span>{u.display_name || u.user_id}</span>
-                    <span className="font-mono text-[10px] text-muted-foreground">
-                      {u.user_id}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+          <div className="relative">
+            <Input
+              autoFocus
+              placeholder="@alice:matrix.org"
+              value={to}
+              onChange={(e) => {
+                setTo(e.target.value);
+                setShowSuggestions(true);
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              onBlur={() => {
+                // Delay so click on suggestion still registers.
+                window.setTimeout(() => setShowSuggestions(false), 150);
+              }}
+              disabled={busy}
+              className="font-mono text-sm"
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <ul className="absolute z-10 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-lg">
+                {suggestions.map((u) => (
+                  <li key={u.user_id}>
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => {
+                        setTo(u.user_id);
+                        setShowSuggestions(false);
+                      }}
+                    >
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate font-medium">
+                          {u.display_name || u.user_id}
+                        </span>
+                        <span className="truncate font-mono text-[10px] text-muted-foreground">
+                          {u.user_id}
+                        </span>
+                      </span>
+                      <span
+                        className={
+                          "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider " +
+                          (u.source === "known"
+                            ? "bg-selected text-selected-foreground"
+                            : "bg-muted text-muted-foreground")
+                        }
+                      >
+                        {u.source === "known" ? "Known" : "Directory"}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {!to && knownContacts.length > 0 && (
+            <span className="mt-1 block text-[10px] text-muted-foreground">
+              Suggestions show people you share rooms with. Type to search the
+              wider directory.
+            </span>
           )}
         </label>
 
@@ -146,7 +234,7 @@ export function Compose() {
 
         <div className="flex items-center justify-between gap-2 pt-1">
           <span className="text-[10px] text-muted-foreground">
-            Encrypted DM · auto-tagged for hmail
+            Encrypted DM · auto-tagged · code-confirm before chat
           </span>
           <div className="flex gap-2">
             <Button
@@ -164,5 +252,6 @@ export function Compose() {
         </div>
       </form>
     </Modal>
+    </>
   );
 }

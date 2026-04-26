@@ -6,12 +6,10 @@ import {
   Archive,
   Trash2,
   Tag,
-  PenLine,
   LogOut,
   ListChecks,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useMailStore } from "@/hooks/use-mail";
 import { useConversations, useMyMxid } from "@/lib/rooms";
@@ -56,34 +54,35 @@ export function Sidebar() {
 
   return (
     <div className="flex h-full flex-col bg-surface">
-      <div className="flex items-center gap-2 px-4 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-seal text-seal-foreground">
-          <span className="font-display text-base font-bold italic">h</span>
+      {/* Brand */}
+      <div className="flex items-center gap-2 px-5 py-4">
+        <div className="flex h-7 w-7 items-center justify-center rounded bg-seal text-seal-foreground">
+          <span className="font-display text-sm font-bold italic">h</span>
         </div>
-        <div className="flex min-w-0 flex-col">
-          <span className="text-sm font-semibold leading-tight tracking-tight">hmail</span>
-          <span className="truncate font-mono text-[10px] leading-tight text-muted-foreground">
+        <div className="flex min-w-0 flex-col leading-tight">
+          <span className="text-sm font-semibold tracking-tight">hmail</span>
+          <span className="truncate font-mono text-[10px] text-muted-foreground">
             @{localpart}
             {domain && <>:{domain}</>}
           </span>
         </div>
       </div>
 
-      <div className="px-3 pb-3 pt-1">
-        <Button
+      {/* Compose */}
+      <div className="px-4 pb-4">
+        <button
           onClick={() => {
             setComposeOpen(true);
             setSidebarOpen(false);
           }}
-          className="w-full justify-start gap-3 rounded-2xl bg-primary px-4 text-base font-medium shadow-sm hover:bg-primary/90"
-          size="lg"
+          className="w-full rounded-sm bg-seal px-4 py-2.5 text-xs font-bold uppercase tracking-wider text-seal-foreground shadow-sm transition hover:brightness-95"
         >
-          <PenLine className="h-5 w-5" />
           Compose
-        </Button>
+        </button>
       </div>
 
-      <nav className="px-2">
+      {/* Folders */}
+      <nav>
         {items.map((item) => {
           const active = item.folder !== undefined && folder === item.folder;
           return (
@@ -97,26 +96,24 @@ export function Sidebar() {
               }}
               disabled={item.disabled}
               className={cn(
-                "flex w-full items-center justify-between rounded-r-full px-4 py-2 text-sm font-medium transition-colors",
+                "flex w-full items-center justify-between border-l-2 border-transparent py-1.5 pl-5 pr-4 text-[13px] transition",
                 "hover:bg-accent",
-                active && "bg-selected text-selected-foreground hover:bg-selected",
+                active &&
+                  "border-l-seal bg-accent font-bold text-seal hover:bg-accent",
                 item.disabled && "opacity-40 hover:bg-transparent",
               )}
             >
-              <span className="flex items-center gap-4">
-                <item.icon className="h-4 w-4 shrink-0" />
-                <span>{item.label}</span>
-              </span>
-              {item.count !== undefined && item.count > 0 && (
-                <span
-                  className={cn(
-                    "font-mono text-[11px]",
-                    active ? "text-selected-foreground" : "text-muted-foreground",
+              <span className="flex items-center gap-3">
+                <item.icon className="h-3.5 w-3.5 shrink-0" />
+                <span>
+                  {item.label}
+                  {item.count !== undefined && item.count > 0 && (
+                    <span className={cn("ml-1", active ? "" : "text-muted-foreground")}>
+                      ({item.count})
+                    </span>
                   )}
-                >
-                  {item.count}
                 </span>
-              )}
+              </span>
             </button>
           );
         })}
@@ -125,9 +122,9 @@ export function Sidebar() {
             setManageRoomsOpen(true);
             setSidebarOpen(false);
           }}
-          className="mt-1 flex w-full items-center gap-4 rounded-r-full px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="flex w-full items-center gap-3 border-l-2 border-transparent py-1.5 pl-5 pr-4 text-[13px] text-muted-foreground transition hover:bg-accent hover:text-foreground"
         >
-          <ListChecks className="h-4 w-4 shrink-0" />
+          <ListChecks className="h-3.5 w-3.5 shrink-0" />
           <span>Manage rooms…</span>
         </button>
       </nav>
@@ -135,18 +132,18 @@ export function Sidebar() {
       {tags.length > 0 && (
         <>
           <Separator className="my-3" />
-          <div className="px-2">
-            <div className="mb-1 px-4 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-              Tags
+          <div>
+            <div className="px-5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Labels
             </div>
             {tags.map((tag) => (
               <button
                 key={tag}
                 disabled
-                className="flex w-full items-center gap-4 rounded-r-full px-4 py-1.5 text-sm transition-colors hover:bg-accent"
+                className="flex w-full items-center gap-3 border-l-2 border-transparent py-1 pl-5 pr-4 text-[13px] text-muted-foreground transition hover:bg-accent"
               >
-                <Tag className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                <span className="text-muted-foreground">{tag}</span>
+                <Tag className="h-3 w-3 shrink-0" />
+                <span>{tag}</span>
               </button>
             ))}
           </div>
@@ -156,15 +153,13 @@ export function Sidebar() {
       <div className="flex-1" />
 
       <Separator />
-      <div className="p-2">
-        <button
-          onClick={() => void logout()}
-          className="flex w-full items-center gap-4 rounded-r-full px-4 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent"
-        >
-          <LogOut className="h-3.5 w-3.5" />
-          <span>Sign out</span>
-        </button>
-      </div>
+      <button
+        onClick={() => void logout()}
+        className="flex w-full items-center gap-3 px-5 py-2 text-[12px] text-muted-foreground transition hover:bg-accent"
+      >
+        <LogOut className="h-3 w-3" />
+        <span>Sign out</span>
+      </button>
     </div>
   );
 }
