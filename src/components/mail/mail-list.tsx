@@ -1,15 +1,24 @@
-import { useMemo } from "react";
-import { Search, Star, Menu } from "lucide-react";
+import { useMemo, useState } from "react";
+import {
+  Star,
+  Menu,
+  RefreshCw,
+  ChevronDown,
+  Search,
+  Paperclip,
+  Inbox as InboxIcon,
+} from "lucide-react";
 import { cn, relativeTime } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import { useMailStore } from "@/hooks/use-mail";
-import { useConversations, type Conversation } from "@/lib/rooms";
+import {
+  setStarred,
+  useConversations,
+  type Conversation,
+} from "@/lib/rooms";
 
-function ConversationCard({
+function ConversationRow({
   conversation,
   selected,
   onSelect,
@@ -18,73 +27,85 @@ function ConversationCard({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const lastMessage = conversation.messages[conversation.messages.length - 1];
+  const [hover, setHover] = useState(false);
+  const last = conversation.messages[conversation.messages.length - 1];
   const ts = new Date(conversation.last_activity_ts);
   const senderLine =
-    conversation.participants.map((p) => p.display_name).join(", ") ||
-    "Empty room";
+    conversation.participants.map((p) => p.display_name).join(", ") || "—";
+  const hasAttachment = conversation.messages.some((m) => !!m.attachment);
 
   return (
-    <button
+    <div
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       onClick={onSelect}
       className={cn(
-        "group relative flex w-full flex-col items-start gap-0.5 border-b border-border/60 px-4 py-3 text-left text-sm transition-colors",
-        "hover:bg-accent/60",
+        "flex h-9 cursor-pointer items-center gap-2 border-b border-border/50 px-2 text-[13px] transition-colors sm:px-4",
+        conversation.unread ? "bg-background" : "bg-surface/40",
+        hover && "shadow-[inset_0_0_0_9999px_hsl(var(--accent)/0.5)]",
         selected && "bg-selected hover:bg-selected",
       )}
     >
-      <div className="flex w-full items-baseline justify-between gap-2">
-        <div
+      {/* Star */}
+      <button
+        type="button"
+        aria-label={conversation.starred ? "Unstar" : "Star"}
+        onClick={(e) => {
+          e.stopPropagation();
+          void setStarred(conversation.room_id, !conversation.starred);
+        }}
+        className="shrink-0 p-1 text-muted-foreground hover:text-seal"
+      >
+        <Star
           className={cn(
-            "flex items-center gap-1.5 truncate",
-            conversation.unread ? "font-semibold text-foreground" : "font-medium text-foreground/90",
+            "h-3.5 w-3.5",
+            conversation.starred && "fill-seal text-seal",
           )}
-        >
-          {conversation.starred && (
-            <Star className="h-3.5 w-3.5 shrink-0 fill-seal text-seal" />
-          )}
-          {conversation.unread && (
-            <span aria-label="unread" className="h-1.5 w-1.5 shrink-0 rounded-full bg-seal" />
-          )}
-          <span className="truncate">{senderLine}</span>
-        </div>
-        <span
-          className={cn(
-            "shrink-0 font-mono text-[11px]",
-            conversation.unread ? "text-foreground" : "text-muted-foreground",
-          )}
-        >
-          {relativeTime(ts)}
-        </span>
-      </div>
+        />
+      </button>
 
+      {/* Sender */}
       <div
         className={cn(
-          "w-full truncate text-[14px] leading-snug",
-          conversation.unread ? "font-semibold" : "font-normal",
+          "w-32 shrink-0 truncate sm:w-44",
+          conversation.unread ? "font-bold text-foreground" : "font-normal text-foreground/85",
         )}
       >
-        {conversation.subject}
+        {senderLine}
       </div>
 
-      <div className="line-clamp-1 w-full text-xs leading-relaxed text-muted-foreground">
-        {lastMessage?.body || "—"}
+      {/* Subject — snippet */}
+      <div className="flex min-w-0 flex-1 items-baseline gap-2 truncate">
+        <span
+          className={cn(
+            "truncate",
+            conversation.unread ? "font-bold text-foreground" : "text-foreground/90",
+          )}
+        >
+          {conversation.subject}
+        </span>
+        {last?.body && (
+          <span className="truncate text-muted-foreground">
+            {" — "}
+            {last.body}
+          </span>
+        )}
       </div>
 
-      {conversation.tags.length > 0 && (
-        <div className="mt-1 flex flex-wrap gap-1">
-          {conversation.tags.map((t) => (
-            <Badge
-              key={t}
-              variant="outline"
-              className="border-border/60 bg-transparent px-1.5 py-0 text-[9px] font-normal uppercase tracking-wider text-muted-foreground"
-            >
-              {t}
-            </Badge>
-          ))}
-        </div>
+      {hasAttachment && (
+        <Paperclip className="h-3 w-3 shrink-0 text-muted-foreground" />
       )}
-    </button>
+
+      {/* Date */}
+      <div
+        className={cn(
+          "w-14 shrink-0 text-right font-mono text-[11px]",
+          conversation.unread ? "font-bold text-foreground" : "text-muted-foreground",
+        )}
+      >
+        {relativeTime(ts)}
+      </div>
+    </div>
   );
 }
 
@@ -96,22 +117,24 @@ export function MailList() {
   const setManageRoomsOpen = useMailStore((s) => s.setManageRoomsOpen);
   const all = useConversations();
 
+  const [showUnreadOnly, setShowUnreadOnly] = useState(false);
+
   const filtered = useMemo(() => {
-    if (folder === "starred") return all.filter((c) => c.starred);
-    if (folder === "archive") return all.filter((c) => c.archived);
-    return all.filter((c) => !c.archived);
-  }, [all, folder]);
+    let list: Conversation[];
+    if (folder === "starred") list = all.filter((c) => c.starred);
+    else if (folder === "archive") list = all.filter((c) => c.archived);
+    else list = all.filter((c) => !c.archived);
+    if (showUnreadOnly) list = list.filter((c) => c.unread);
+    return list;
+  }, [all, folder, showUnreadOnly]);
 
-  const unread = filtered.filter((c) => c.unread);
-
-  const folderTitle =
-    folder === "starred" ? "Starred" : folder === "archive" ? "Archive" : "Inbox";
-
-  const empty = filtered.length === 0;
+  const total = filtered.length;
+  const unreadCount = filtered.filter((c) => c.unread).length;
 
   return (
-    <Tabs defaultValue="all" className="flex h-full flex-col bg-background">
-      <div className="flex items-center gap-2 px-2 pt-3 sm:px-4">
+    <div className="flex h-full flex-col bg-background">
+      {/* Top search */}
+      <div className="flex items-center gap-2 border-b border-border bg-surface px-2 py-2 sm:px-4">
         <button
           aria-label="Open menu"
           onClick={() => setSidebarOpen(true)}
@@ -119,80 +142,99 @@ export function MailList() {
         >
           <Menu className="h-5 w-5" />
         </button>
-        <h1 className="flex-1 text-xl font-semibold tracking-tight">{folderTitle}</h1>
-        <TabsList className="h-7 p-0.5">
-          <TabsTrigger value="all" className="h-6 px-2 text-xs">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search mail (soon)"
+            disabled
+            className="rounded-md border-0 bg-background pl-9 text-sm shadow-sm"
+          />
+        </div>
+      </div>
+
+      {/* Toolbar */}
+      <div className="flex items-center gap-1 border-b border-border bg-background px-2 py-1.5 sm:px-4">
+        <button
+          type="button"
+          aria-label="Select all"
+          className="flex items-center gap-1 rounded p-1.5 text-muted-foreground hover:bg-accent"
+        >
+          <input type="checkbox" disabled className="h-3.5 w-3.5" />
+          <ChevronDown className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          aria-label="Refresh"
+          className="rounded p-1.5 text-muted-foreground hover:bg-accent"
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+        </button>
+        <div className="ml-2 flex gap-1 text-[11px] font-medium">
+          <button
+            onClick={() => setShowUnreadOnly(false)}
+            className={cn(
+              "rounded px-2 py-1",
+              !showUnreadOnly ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent",
+            )}
+          >
             All
-          </TabsTrigger>
-          <TabsTrigger value="unread" className="h-6 px-2 text-xs">
-            Unread
-          </TabsTrigger>
-        </TabsList>
+          </button>
+          <button
+            onClick={() => setShowUnreadOnly(true)}
+            className={cn(
+              "rounded px-2 py-1",
+              showUnreadOnly ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent",
+            )}
+          >
+            Unread {unreadCount > 0 && `(${unreadCount})`}
+          </button>
+        </div>
+        <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+          {total === 0 ? "0" : `1–${total} of ${total}`}
+        </span>
       </div>
 
-      <div className="px-3 py-3 sm:px-4">
-        <form>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              placeholder="Search mail (Stage 5)"
-              className="rounded-full bg-surface pl-9"
-              disabled
-            />
-          </div>
-        </form>
-      </div>
-      <Separator />
+      {/* "Unread" pill row, only when unread */}
+      {!showUnreadOnly && unreadCount > 0 && (
+        <div className="border-b border-border bg-background px-4 py-1.5 text-[11px] font-bold text-foreground">
+          Unread
+        </div>
+      )}
 
-      <TabsContent value="all" className="m-0 flex-1 overflow-hidden">
-        <ScrollArea className="h-full">
-          <div>
-            {empty ? (
-              <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
-                <p className="text-sm text-muted-foreground">
-                  No conversations in your hmail inbox yet.
-                </p>
-                <button
-                  type="button"
-                  onClick={() => setManageRoomsOpen(true)}
-                  className="text-sm font-medium text-primary hover:underline"
-                >
-                  Adopt existing rooms…
-                </button>
-              </div>
-            ) : (
-              filtered.map((c) => (
-                <ConversationCard
-                  key={c.room_id}
-                  conversation={c}
-                  selected={c.room_id === selectedRoomId}
-                  onSelect={() => setSelectedRoomId(c.room_id)}
-                />
-              ))
+      <ScrollArea className="flex-1">
+        {total === 0 ? (
+          <div className="flex flex-col items-center gap-3 px-6 py-20 text-center">
+            <InboxIcon className="h-8 w-8 text-muted-foreground/50" />
+            <p className="text-sm text-muted-foreground">
+              {folder === "archive"
+                ? "Archive is empty."
+                : folder === "starred"
+                ? "No starred conversations."
+                : "Your hmail inbox is empty."}
+            </p>
+            {folder === "inbox" && (
+              <button
+                type="button"
+                onClick={() => setManageRoomsOpen(true)}
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                Adopt existing rooms…
+              </button>
             )}
           </div>
-        </ScrollArea>
-      </TabsContent>
-      <TabsContent value="unread" className="m-0 flex-1 overflow-hidden">
-        <ScrollArea className="h-full">
+        ) : (
           <div>
-            {unread.length === 0 ? (
-              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                No unread.
-              </div>
-            ) : (
-              unread.map((c) => (
-                <ConversationCard
-                  key={c.room_id}
-                  conversation={c}
-                  selected={c.room_id === selectedRoomId}
-                  onSelect={() => setSelectedRoomId(c.room_id)}
-                />
-              ))
-            )}
+            {filtered.map((c) => (
+              <ConversationRow
+                key={c.room_id}
+                conversation={c}
+                selected={c.room_id === selectedRoomId}
+                onSelect={() => setSelectedRoomId(c.room_id)}
+              />
+            ))}
           </div>
-        </ScrollArea>
-      </TabsContent>
-    </Tabs>
+        )}
+      </ScrollArea>
+    </div>
   );
 }

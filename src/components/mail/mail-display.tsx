@@ -13,6 +13,12 @@ import {
   Clock,
   Loader2,
   AlertCircle,
+  Reply,
+  Paperclip,
+  Send,
+  X,
+  FileIcon,
+  Download,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -38,12 +44,14 @@ import {
   markRoomRead,
   retractMessage,
   sendThreadReply,
+  sendAttachment,
   setArchived,
   setStarred,
   toggleReaction,
   useConversation,
   useMyMxid,
   type Message,
+  type Attachment,
 } from "@/lib/rooms";
 
 const REACTION_PALETTE = ["👍", "❤️", "😂", "🎉", "🤔", "🙏"];
@@ -64,6 +72,44 @@ function StatusPill({ status }: { status: Message["status"] }) {
     );
   }
   return null;
+}
+
+function AttachmentBlock({ attachment }: { attachment: Attachment }) {
+  if (attachment.kind === "image" && attachment.url) {
+    return (
+      <a
+        href={attachment.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-block max-w-md overflow-hidden rounded-lg border border-border"
+      >
+        <img
+          src={attachment.url}
+          alt={attachment.name}
+          className="block max-h-80 w-auto"
+          loading="lazy"
+        />
+      </a>
+    );
+  }
+  return (
+    <a
+      href={attachment.url ?? "#"}
+      target="_blank"
+      rel="noopener noreferrer"
+      download={attachment.name}
+      className="mt-2 inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-accent"
+    >
+      <FileIcon className="h-4 w-4 text-muted-foreground" />
+      <span className="font-medium">{attachment.name}</span>
+      {attachment.size && (
+        <span className="font-mono text-[10px] text-muted-foreground">
+          {Math.round(attachment.size / 1024)} kB
+        </span>
+      )}
+      <Download className="ml-1 h-3.5 w-3.5 text-muted-foreground" />
+    </a>
+  );
 }
 
 function ReactionRow({
@@ -95,11 +141,7 @@ function ReactionRow({
   );
 }
 
-function EmojiPalette({
-  onPick,
-}: {
-  onPick: (emoji: string) => void;
-}) {
+function EmojiPalette({ onPick }: { onPick: (emoji: string) => void }) {
   return (
     <div className="flex gap-1">
       {REACTION_PALETTE.map((e) => (
@@ -148,16 +190,18 @@ function LifecyclePopover({ message }: { message: Message }) {
   );
 }
 
-function MessageBlock({
+function MessageCard({
   message,
   roomId,
   isYou,
-  indent,
+  collapsed,
+  onToggleCollapsed,
 }: {
   message: Message;
   roomId: string;
   isYou: boolean;
-  indent?: boolean;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.body);
@@ -177,65 +221,96 @@ function MessageBlock({
     }
   }
 
-  return (
-    <article
-      className={cn(
-        "group relative flex gap-3 px-4 py-4 transition-colors hover:bg-accent/30 sm:gap-4 sm:px-6 sm:py-5",
-        indent && "border-l-2 border-border/40 pl-8 sm:pl-14",
-      )}
-    >
-      <Avatar className="h-9 w-9 shrink-0">
-        <AvatarFallback
-          className={
-            isYou
-              ? "bg-primary text-primary-foreground font-mono text-[11px]"
-              : "bg-muted text-foreground font-mono text-[11px]"
-          }
-        >
-          {message.sender.monogram}
-        </AvatarFallback>
-      </Avatar>
+  // Collapsed: one-line preview with sender, date, snippet.
+  if (collapsed) {
+    const snippet = message.body.split("\n")[0].slice(0, 140);
+    return (
+      <button
+        type="button"
+        onClick={onToggleCollapsed}
+        className="flex w-full items-center gap-3 border-b border-border px-4 py-3 text-left transition hover:bg-accent/40 sm:px-6"
+      >
+        <Avatar className="h-7 w-7 shrink-0">
+          <AvatarFallback className="bg-muted font-mono text-[10px]">
+            {message.sender.monogram}
+          </AvatarFallback>
+        </Avatar>
+        <span className="min-w-0 flex-1 truncate text-sm">
+          <span className="font-medium">{message.sender.display_name}</span>
+          <span className="ml-2 text-muted-foreground">{snippet}</span>
+        </span>
+        <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground sm:inline">
+          {format(new Date(message.ts), "MMM d")}
+        </span>
+      </button>
+    );
+  }
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex items-baseline justify-between gap-3">
-          <div className="flex items-baseline gap-2 min-w-0">
-            <span className="text-[15px] font-semibold leading-tight">
-              {message.sender.display_name}
-            </span>
-            <span className="hidden truncate font-mono text-[10px] text-muted-foreground sm:inline">
+  return (
+    <article className="group relative border-b border-border bg-background px-4 py-4 sm:px-6 sm:py-5">
+      <header className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <Avatar className="h-9 w-9 shrink-0">
+            <AvatarFallback
+              className={
+                isYou
+                  ? "bg-primary text-primary-foreground font-mono text-[11px]"
+                  : "bg-muted text-foreground font-mono text-[11px]"
+              }
+            >
+              {message.sender.monogram}
+            </AvatarFallback>
+          </Avatar>
+          <div className="flex min-w-0 flex-col">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className="text-[15px] font-semibold leading-tight">
+                {message.sender.display_name}
+              </span>
+              {message.edited && (
+                <span className="text-[10px] text-muted-foreground">(edited)</span>
+              )}
+              <StatusPill status={message.status} />
+            </div>
+            <span className="truncate font-mono text-[10px] text-muted-foreground">
               {message.sender.mxid}
             </span>
-            {message.edited && (
-              <span className="text-[10px] text-muted-foreground">(edited)</span>
-            )}
-            <StatusPill status={message.status} />
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  aria-label="Lifecycle"
-                  className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
-                >
-                  <Clock className="h-3.5 w-3.5" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="p-0">
-                <LifecyclePopover message={message} />
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <time
-              className="font-mono text-[10px] text-muted-foreground"
-              dateTime={message.ts}
-            >
-              {format(new Date(message.ts), "MMM d · h:mm a")}
-            </time>
-          </div>
-        </header>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Lifecycle"
+                className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+              >
+                <Clock className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="p-0">
+              <LifecyclePopover message={message} />
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <time
+            className="font-mono text-[10px] text-muted-foreground"
+            dateTime={message.ts}
+          >
+            {format(new Date(message.ts), "MMM d · h:mm a")}
+          </time>
+          <button
+            type="button"
+            onClick={onToggleCollapsed}
+            className="rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:bg-accent group-hover:opacity-100"
+            aria-label="Collapse"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </header>
 
+      <div className="mt-3 pl-0 sm:pl-12">
         {editing ? (
-          <div className="mt-2 flex flex-col gap-2">
+          <div className="flex flex-col gap-2">
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -255,7 +330,7 @@ function MessageBlock({
         ) : (
           <div
             className={cn(
-              "mt-2 whitespace-pre-wrap text-sm leading-relaxed",
+              "whitespace-pre-wrap text-sm leading-relaxed",
               muted ? "italic text-muted-foreground" : "text-foreground/90",
             )}
           >
@@ -263,10 +338,12 @@ function MessageBlock({
           </div>
         )}
 
+        {message.attachment && <AttachmentBlock attachment={message.attachment} />}
+
         <ReactionRow message={message} roomId={roomId} />
 
         {!editing && !muted && (
-          <div className="mt-2 flex flex-wrap items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <div className="mt-3 flex flex-wrap items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             {showReact ? (
               <EmojiPalette
                 onPick={(emoji) => {
@@ -318,26 +395,35 @@ function MessageBlock({
   );
 }
 
-function ReplyComposer({ roomId }: { roomId: string }) {
+function ReplyCard({ roomId }: { roomId: string }) {
+  const [open, setOpen] = useState(false);
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
 
-  // Auto-grow.
   useEffect(() => {
+    if (!open) return;
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 240) + "px";
-  }, [body]);
+  }, [body, open]);
 
   async function send() {
+    if (busy) return;
     const text = body.trim();
-    if (!text || busy) return;
+    if (!text && files.length === 0) return;
     setBusy(true);
     try {
-      await sendThreadReply(roomId, text);
+      if (text) await sendThreadReply(roomId, text);
+      for (const f of files) {
+        await sendAttachment(roomId, f);
+      }
       setBody("");
+      setFiles([]);
+      setOpen(false);
     } finally {
       setBusy(false);
     }
@@ -350,30 +436,118 @@ function ReplyComposer({ roomId }: { roomId: string }) {
     }
   }
 
+  if (!open) {
+    return (
+      <div className="border-t border-border bg-background px-4 py-3 sm:px-6">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="rounded-full"
+            onClick={() => setOpen(true)}
+          >
+            <Reply className="mr-1.5 h-3.5 w-3.5" /> Reply
+          </Button>
+          <Button variant="outline" size="sm" className="rounded-full" disabled>
+            <ReplyAll className="mr-1.5 h-3.5 w-3.5" /> Reply all
+          </Button>
+          <Button variant="outline" size="sm" className="rounded-full" disabled>
+            <Forward className="mr-1.5 h-3.5 w-3.5" /> Forward
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="border-t border-border bg-surface/50 px-3 py-3 sm:px-6">
-      <div className="flex items-end gap-2 rounded-2xl border border-border bg-background px-3 py-2 shadow-sm focus-within:border-primary">
+    <div className="border-t border-border bg-background px-3 py-3 sm:px-6">
+      <div className="rounded-2xl border border-border bg-surface shadow-sm">
         <textarea
           ref={ref}
           value={body}
           onChange={(e) => setBody(e.target.value)}
           onKeyDown={onKeyDown}
-          rows={1}
+          rows={2}
           placeholder="Reply…"
-          className="min-h-[36px] flex-1 resize-none border-0 bg-transparent text-sm focus:outline-none"
+          autoFocus
+          className="block w-full resize-none border-0 bg-transparent px-4 py-3 text-sm focus:outline-none"
           disabled={busy}
         />
-        <Button
-          size="sm"
-          onClick={() => void send()}
-          disabled={busy || !body.trim()}
-          className="rounded-full"
-        >
-          {busy ? "…" : "Send"}
-        </Button>
-      </div>
-      <div className="mt-1 px-1 text-[10px] text-muted-foreground">
-        ⌘↵ to send · replies are threaded
+        {files.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-4 pb-2">
+            {files.map((f, i) => (
+              <span
+                key={i}
+                className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 text-xs"
+              >
+                <Paperclip className="h-3 w-3 text-muted-foreground" />
+                <span className="max-w-[14ch] truncate">{f.name}</span>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground"
+                  onClick={() => setFiles(files.filter((_, j) => j !== i))}
+                  aria-label="Remove attachment"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-2 border-t border-border px-2 py-2">
+          <div className="flex items-center gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const list = Array.from(e.target.files ?? []);
+                if (list.length) setFiles((prev) => [...prev, ...list]);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={busy}
+                  className="rounded-full p-2 text-muted-foreground hover:bg-accent"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Attach</TooltipContent>
+            </Tooltip>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="hidden text-[10px] text-muted-foreground sm:inline">
+              ⌘↵ to send
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setOpen(false);
+                setBody("");
+                setFiles([]);
+              }}
+              disabled={busy}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => void send()}
+              disabled={busy || (!body.trim() && files.length === 0)}
+              className="gap-1.5 rounded-full"
+            >
+              <Send className="h-3.5 w-3.5" />
+              {busy ? "Sending…" : "Send"}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -384,6 +558,25 @@ export function MailDisplay() {
   const setSelectedRoomId = useMailStore((s) => s.setSelectedRoomId);
   const conversation = useConversation(selectedRoomId);
   const myMxid = useMyMxid();
+  const [collapsedSet, setCollapsedSet] = useState<Set<string>>(new Set());
+  const initRoomRef = useRef<string | null>(null);
+
+  // When the selected room changes, collapse all messages except the latest.
+  useEffect(() => {
+    if (!conversation) return;
+    if (initRoomRef.current === conversation.room_id) return;
+    initRoomRef.current = conversation.room_id;
+    if (conversation.messages.length <= 1) {
+      setCollapsedSet(new Set());
+      return;
+    }
+    const latest = conversation.messages[conversation.messages.length - 1];
+    const next = new Set<string>();
+    for (const m of conversation.messages) {
+      if (m.event_id !== latest.event_id) next.add(m.event_id);
+    }
+    setCollapsedSet(next);
+  }, [conversation]);
 
   useEffect(() => {
     if (selectedRoomId) {
@@ -391,24 +584,12 @@ export function MailDisplay() {
     }
   }, [selectedRoomId, conversation?.last_activity_ts]);
 
-  const grouped = useMemo(() => {
-    if (!conversation) return null;
-    const messages = conversation.messages;
-    if (messages.length === 0)
-      return { root: null as Message | null, replies: [] as Message[], extras: [] as Message[] };
-    const root = messages.find((m) => !m.is_thread_reply) ?? messages[0];
-    const replies = messages.filter(
-      (m) => m.is_thread_reply && m.thread_root === root.event_id,
-    );
-    const extras = messages.filter(
-      (m) =>
-        m.event_id !== root.event_id &&
-        !(m.is_thread_reply && m.thread_root === root.event_id),
-    );
-    return { root, replies, extras };
+  const ordered = useMemo(() => {
+    if (!conversation) return [] as Message[];
+    return conversation.messages;
   }, [conversation]);
 
-  if (!conversation || !grouped) {
+  if (!conversation) {
     return (
       <div className="hidden h-full items-center justify-center bg-background md:flex">
         <div className="text-center">
@@ -421,8 +602,18 @@ export function MailDisplay() {
     );
   }
 
+  function toggleCollapsed(eventId: string) {
+    setCollapsedSet((prev) => {
+      const next = new Set(prev);
+      if (next.has(eventId)) next.delete(eventId);
+      else next.add(eventId);
+      return next;
+    });
+  }
+
   return (
     <div className="flex h-full flex-col bg-background">
+      {/* Header */}
       <div className="flex items-start justify-between gap-3 px-3 py-3 sm:px-6 sm:py-4">
         <div className="flex min-w-0 items-start gap-2">
           <button
@@ -445,13 +636,11 @@ export function MailDisplay() {
               </span>
               <span>·</span>
               <span className="font-mono">
-                {conversation.messages.length}{" "}
-                {conversation.messages.length === 1 ? "message" : "messages"}
+                {ordered.length} {ordered.length === 1 ? "message" : "messages"}
               </span>
             </div>
           </div>
         </div>
-
         <div className="flex shrink-0 items-center gap-1">
           <Tooltip>
             <TooltipTrigger asChild>
@@ -470,9 +659,7 @@ export function MailDisplay() {
                 />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
-              {conversation.starred ? "Unstar" : "Star"}
-            </TooltipContent>
+            <TooltipContent>{conversation.starred ? "Unstar" : "Star"}</TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -480,9 +667,7 @@ export function MailDisplay() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                onClick={() =>
-                  setArchived(conversation.room_id, !conversation.archived)
-                }
+                onClick={() => setArchived(conversation.room_id, !conversation.archived)}
               >
                 {conversation.archived ? (
                   <ArchiveRestore className="h-4 w-4" />
@@ -491,9 +676,7 @@ export function MailDisplay() {
                 )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>
-              {conversation.archived ? "Restore" : "Archive"}
-            </TooltipContent>
+            <TooltipContent>{conversation.archived ? "Restore" : "Archive"}</TooltipContent>
           </Tooltip>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -503,10 +686,10 @@ export function MailDisplay() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem disabled>
-                <ReplyAll className="mr-2 h-3.5 w-3.5" /> Reply all · Stage 2
+                <ReplyAll className="mr-2 h-3.5 w-3.5" /> Reply all · soon
               </DropdownMenuItem>
               <DropdownMenuItem disabled>
-                <Forward className="mr-2 h-3.5 w-3.5" /> Forward · Stage 2
+                <Forward className="mr-2 h-3.5 w-3.5" /> Forward · soon
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled>Mute conversation</DropdownMenuItem>
@@ -520,44 +703,27 @@ export function MailDisplay() {
 
       <Separator />
 
+      {/* Messages */}
       <ScrollArea className="flex-1">
-        <div className="divide-y divide-border/40">
-          {grouped.root && (
-            <MessageBlock
-              key={grouped.root.event_id}
-              message={grouped.root}
-              roomId={conversation.room_id}
-              isYou={grouped.root.sender.mxid === myMxid}
-            />
-          )}
-          {grouped.replies.length > 0 && (
-            <div className="bg-muted/20">
-              <div className="px-4 py-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground sm:px-6">
-                Thread · {grouped.replies.length}
-              </div>
-              {grouped.replies.map((m) => (
-                <MessageBlock
-                  key={m.event_id}
-                  message={m}
-                  roomId={conversation.room_id}
-                  isYou={m.sender.mxid === myMxid}
-                  indent
-                />
-              ))}
-            </div>
-          )}
-          {grouped.extras.map((m) => (
-            <MessageBlock
+        {ordered.length === 0 ? (
+          <div className="px-6 py-12 text-center text-sm text-muted-foreground">
+            No messages yet.
+          </div>
+        ) : (
+          ordered.map((m) => (
+            <MessageCard
               key={m.event_id}
               message={m}
               roomId={conversation.room_id}
               isYou={m.sender.mxid === myMxid}
+              collapsed={collapsedSet.has(m.event_id)}
+              onToggleCollapsed={() => toggleCollapsed(m.event_id)}
             />
-          ))}
-        </div>
+          ))
+        )}
       </ScrollArea>
 
-      <ReplyComposer roomId={conversation.room_id} />
+      <ReplyCard roomId={conversation.room_id} />
     </div>
   );
 }

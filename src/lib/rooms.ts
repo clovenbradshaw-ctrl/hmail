@@ -31,6 +31,14 @@ export interface EditEntry {
   ts: string;
 }
 
+export interface Attachment {
+  kind: "image" | "file";
+  url: string | null;
+  name: string;
+  mimetype?: string;
+  size?: number;
+}
+
 export interface Message {
   event_id: string;
   sender: Sender;
@@ -51,6 +59,7 @@ export interface Message {
   edits: EditEntry[];
   /** Whether the current user authored this message. */
   is_mine: boolean;
+  attachment?: Attachment;
 }
 
 export interface Conversation {
@@ -216,6 +225,19 @@ function eventToMessage(
   const isThreadReply = relation?.rel_type === RelationType.Thread;
   const myUserId = client.getUserId();
   const edits = editsFor(room, ev);
+  const content = ev.getContent() as Record<string, unknown> | undefined;
+  const msgtype = content?.msgtype as string | undefined;
+  let attachment: Attachment | undefined;
+  if (!ev.isRedacted() && (msgtype === MsgType.Image || msgtype === MsgType.File)) {
+    const info = (content?.info ?? {}) as { mimetype?: string; size?: number };
+    attachment = {
+      kind: msgtype === MsgType.Image ? "image" : "file",
+      url: typeof content?.url === "string" ? mxcToHttp(content.url as string) : null,
+      name: typeof content?.body === "string" ? (content.body as string) : "attachment",
+      mimetype: info.mimetype,
+      size: info.size,
+    };
+  }
   return {
     event_id: ev.getId() ?? `${ev.getTs()}`,
     sender: senderFor(client, room, senderMxid),
@@ -230,6 +252,7 @@ function eventToMessage(
     reactions: reactionsFor(client, room, ev),
     edits,
     is_mine: senderMxid === myUserId,
+    attachment,
   };
 }
 
@@ -474,6 +497,55 @@ export async function searchUsers(query: string): Promise<UserSearchResult[]> {
   }
 }
 
+/**
+ * Everyone the current user shares a joined room with — i.e. everyone they've
+ * communicated with via Matrix. Deduped by MXID, sorted by display name.
+ */
+export function getKnownContacts(): UserSearchResult[] {
+  const client = getClient();
+  if (!client) return [];
+  const myUserId = client.getUserId();
+  const seen = new Map<string, UserSearchResult>();
+  for (const room of client.getRooms()) {
+    if (room.getMyMembership() !== "join") continue;
+    for (const member of room.getJoinedMembers()) {
+      if (member.userId === myUserId) continue;
+      if (seen.has(member.userId)) continue;
+      seen.set(member.userId, {
+        user_id: member.userId,
+        display_name: member.name || member.rawDisplayName || undefined,
+      });
+    }
+  }
+  const arr = Array.from(seen.values());
+  arr.sort((a, b) =>
+    (a.display_name ?? a.user_id).localeCompare(b.display_name ?? b.user_id),
+  );
+  return arr;
+}
+
+/**
+ * Reactive hook: known contacts, refreshing on sync events.
+ */
+export function useKnownContacts(): UserSearchResult[] {
+  return useSyncExternalStore(
+    subscribe,
+    () => {
+      const next = getKnownContacts();
+      const fp = next.map((c) => c.user_id).join(",");
+      if (fp === _knownContactsFingerprint) return _knownContactsCache;
+      _knownContactsFingerprint = fp;
+      _knownContactsCache = next;
+      return next;
+    },
+    () => EMPTY_CONTACTS,
+  );
+}
+
+const EMPTY_CONTACTS: UserSearchResult[] = [];
+let _knownContactsCache: UserSearchResult[] = EMPTY_CONTACTS;
+let _knownContactsFingerprint = "";
+
 export async function composeNewConversation(opts: {
   subject: string;
   to: string;
@@ -578,6 +650,38 @@ export async function retractMessage(roomId: string, eventId: string) {
   const client = getClient();
   if (!client) throw new Error("Not signed in.");
   await client.redactEvent(roomId, eventId, undefined, { reason: "retracted" });
+}
+
+export async function sendAttachment(roomId: string, file: File) {
+  const client = getClient();
+  if (!client) throw new Error("Not signed in.");
+  const upload = await client.uploadContent(file, { type: file.type });
+  const isImage = file.type.startsWith("image/");
+  const content = isImage
+    ? {
+        msgtype: MsgType.Image,
+        body: file.name,
+        url: upload.content_uri,
+        info: { mimetype: file.type, size: file.size },
+      }
+    : {
+        msgtype: MsgType.File,
+        body: file.name,
+        url: upload.content_uri,
+        info: { mimetype: file.type, size: file.size },
+      };
+  type SendMsgFn = (roomId: string, content: unknown) => Promise<unknown>;
+  await (client.sendMessage as unknown as SendMsgFn)(roomId, content);
+}
+
+export function mxcToHttp(mxc: string | undefined): string | null {
+  const client = getClient();
+  if (!client || !mxc) return null;
+  try {
+    return client.mxcUrlToHttp(mxc, undefined, undefined, undefined, true, false, true);
+  } catch {
+    return null;
+  }
 }
 
 export async function toggleReaction(
