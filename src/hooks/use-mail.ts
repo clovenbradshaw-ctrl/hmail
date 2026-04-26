@@ -7,11 +7,23 @@ interface MailState {
   setSelectedRoomId: (id: string | null) => void;
   folder: Folder;
   setFolder: (f: Folder) => void;
+  composeOpen: boolean;
+  setComposeOpen: (open: boolean) => void;
+  manageRoomsOpen: boolean;
+  setManageRoomsOpen: (open: boolean) => void;
+  sidebarOpen: boolean;
+  setSidebarOpen: (open: boolean) => void;
 }
 
 export const useMailStore = create<MailState>((set) => ({
   selectedRoomId: null,
   setSelectedRoomId: (id) => set({ selectedRoomId: id }),
   folder: "inbox",
-  setFolder: (folder) => set({ folder }),
+  setFolder: (folder) => set({ folder, selectedRoomId: null }),
+  composeOpen: false,
+  setComposeOpen: (composeOpen) => set({ composeOpen }),
+  manageRoomsOpen: false,
+  setManageRoomsOpen: (manageRoomsOpen) => set({ manageRoomsOpen }),
+  sidebarOpen: false,
+  setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
 }));
