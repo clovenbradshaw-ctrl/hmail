@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import {
   Archive,
   Star,
@@ -10,6 +10,7 @@ import {
   ShieldCheck,
   PenLine,
   Smile,
+  ArchiveRestore,
 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
@@ -30,20 +31,31 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useMailStore } from "@/hooks/use-mail";
 import {
-  MOCK_CONVERSATIONS,
-  type MockMessage,
-  type MockSender,
-} from "@/lib/mock-data";
+  markRoomRead,
+  setArchived,
+  setStarred,
+  useConversation,
+  useMyMxid,
+  type Message,
+} from "@/lib/rooms";
 
 function MessageBlock({
   message,
   isYou,
+  indent,
 }: {
-  message: MockMessage;
+  message: Message;
   isYou: boolean;
+  indent?: boolean;
 }) {
+  const muted = message.decryption_failed || message.redacted;
   return (
-    <article className="group relative flex gap-4 px-6 py-5 transition-colors hover:bg-muted/30">
+    <article
+      className={
+        "group relative flex gap-4 px-6 py-5 transition-colors hover:bg-muted/30 " +
+        (indent ? "pl-14 border-l-2 border-border/40" : "")
+      }
+    >
       <Avatar className="h-9 w-9 shrink-0">
         <AvatarFallback
           className={
@@ -65,15 +77,13 @@ function MessageBlock({
             <span className="truncate font-mono text-[10px] text-muted-foreground">
               {message.sender.mxid}
             </span>
-            {/* Verification badge — green if cross-signing trust chains.
-                Phase 0 is mock; in Phase 4 the real flag drives this. */}
             {!isYou && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <ShieldCheck className="h-3 w-3 shrink-0 text-muted-foreground/60" />
                 </TooltipTrigger>
                 <TooltipContent>
-                  Device unverified · Phase 4 will let you verify
+                  Device unverified · verification UI lands in Stage 4
                 </TooltipContent>
               </Tooltip>
             )}
@@ -86,16 +96,21 @@ function MessageBlock({
           </time>
         </header>
 
-        <div className="mt-2 whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground/90">
+        <div
+          className={
+            "mt-2 whitespace-pre-wrap font-sans text-sm leading-relaxed " +
+            (muted ? "italic text-muted-foreground" : "text-foreground/90")
+          }
+        >
           {message.body}
         </div>
 
-        {/* Per-message actions, revealed on hover. */}
         <div className="mt-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           <Button
             variant="ghost"
             size="sm"
             className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+            disabled
           >
             <Reply className="h-3 w-3" />
             Reply
@@ -104,6 +119,7 @@ function MessageBlock({
             variant="ghost"
             size="sm"
             className="h-7 gap-1.5 px-2 text-xs text-muted-foreground"
+            disabled
           >
             <Smile className="h-3 w-3" />
             React
@@ -116,12 +132,33 @@ function MessageBlock({
 
 export function MailDisplay() {
   const selectedRoomId = useMailStore((s) => s.selectedRoomId);
-  const conversation = useMemo(
-    () => MOCK_CONVERSATIONS.find((c) => c.room_id === selectedRoomId),
-    [selectedRoomId],
-  );
+  const conversation = useConversation(selectedRoomId);
+  const myMxid = useMyMxid();
 
-  if (!conversation) {
+  // Mark-as-read on selection.
+  useEffect(() => {
+    if (selectedRoomId) {
+      void markRoomRead(selectedRoomId);
+    }
+  }, [selectedRoomId, conversation?.last_activity_ts]);
+
+  const grouped = useMemo(() => {
+    if (!conversation) return null;
+    const messages = conversation.messages;
+    if (messages.length === 0) return { root: null, replies: [] as Message[], extras: [] as Message[] };
+    const root = messages.find((m) => !m.is_thread_reply) ?? messages[0];
+    const replies = messages.filter(
+      (m) => m.is_thread_reply && m.thread_root === root.event_id,
+    );
+    const extras = messages.filter(
+      (m) =>
+        m.event_id !== root.event_id &&
+        !(m.is_thread_reply && m.thread_root === root.event_id),
+    );
+    return { root, replies, extras };
+  }, [conversation]);
+
+  if (!conversation || !grouped) {
     return (
       <div className="flex h-full items-center justify-center bg-background paper-grain">
         <div className="text-center">
@@ -136,12 +173,8 @@ export function MailDisplay() {
     );
   }
 
-  const yourMxid = "@you:hyphae.intelechia.com";
-  const otherParticipants: MockSender[] = conversation.participants;
-
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* Conversation header */}
       <div className="flex items-start justify-between gap-4 px-6 py-4">
         <div className="flex flex-col gap-1 min-w-0">
           <h1 className="font-display text-2xl font-medium leading-tight tracking-tight">
@@ -149,7 +182,9 @@ export function MailDisplay() {
           </h1>
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             <span>
-              with {otherParticipants.map((p) => p.display_name).join(", ")}
+              with{" "}
+              {conversation.participants.map((p) => p.display_name).join(", ") ||
+                "no one yet"}
             </span>
             <span>·</span>
             <span className="font-mono">
@@ -162,7 +197,12 @@ export function MailDisplay() {
         <div className="flex shrink-0 items-center gap-1">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() => setStarred(conversation.room_id, !conversation.starred)}
+              >
                 <Star
                   className={
                     conversation.starred
@@ -172,23 +212,38 @@ export function MailDisplay() {
                 />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Star</TooltipContent>
+            <TooltipContent>
+              {conversation.starred ? "Unstar" : "Star"}
+            </TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <Archive className="h-4 w-4" />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                onClick={() =>
+                  setArchived(conversation.room_id, !conversation.archived)
+                }
+              >
+                {conversation.archived ? (
+                  <ArchiveRestore className="h-4 w-4" />
+                ) : (
+                  <Archive className="h-4 w-4" />
+                )}
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Archive</TooltipContent>
+            <TooltipContent>
+              {conversation.archived ? "Restore from archive" : "Archive"}
+            </TooltipContent>
           </Tooltip>
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
+              <Button variant="ghost" size="icon" className="h-8 w-8" disabled>
                 <Trash2 className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Move to trash</TooltipContent>
+            <TooltipContent>Move to trash · Stage 3</TooltipContent>
           </Tooltip>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -197,11 +252,14 @@ export function MailDisplay() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem>Mark as unread</DropdownMenuItem>
-              <DropdownMenuItem>Mute conversation</DropdownMenuItem>
-              <DropdownMenuItem>Add tag</DropdownMenuItem>
+              <DropdownMenuItem disabled>Mark as unread</DropdownMenuItem>
+              <DropdownMenuItem disabled>Mute conversation</DropdownMenuItem>
+              <DropdownMenuItem disabled>Add tag</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive focus:text-destructive">
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                disabled
+              >
                 Leave conversation
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -211,14 +269,35 @@ export function MailDisplay() {
 
       <Separator />
 
-      {/* Messages */}
       <ScrollArea className="flex-1">
         <div className="divide-y divide-border/40">
-          {conversation.messages.map((m) => (
+          {grouped.root && (
+            <MessageBlock
+              key={grouped.root.event_id}
+              message={grouped.root}
+              isYou={grouped.root.sender.mxid === myMxid}
+            />
+          )}
+          {grouped.replies.length > 0 && (
+            <div className="bg-muted/10">
+              <div className="px-6 py-2 font-mono text-[10px] uppercase tracking-wider text-muted-foreground">
+                Thread · {grouped.replies.length}
+              </div>
+              {grouped.replies.map((m) => (
+                <MessageBlock
+                  key={m.event_id}
+                  message={m}
+                  isYou={m.sender.mxid === myMxid}
+                  indent
+                />
+              ))}
+            </div>
+          )}
+          {grouped.extras.map((m) => (
             <MessageBlock
               key={m.event_id}
               message={m}
-              isYou={m.sender.mxid === yourMxid}
+              isYou={m.sender.mxid === myMxid}
             />
           ))}
         </div>
@@ -226,14 +305,14 @@ export function MailDisplay() {
 
       <Separator />
 
-      {/* Reply composer placeholder */}
       <div className="px-6 py-4">
         <button
           className="flex w-full items-center gap-3 rounded-md border border-input bg-background px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:border-ring/40 hover:bg-accent/30"
           aria-label="Reply"
+          disabled
         >
           <PenLine className="h-3.5 w-3.5" />
-          <span>Reply to {otherParticipants[0]?.display_name ?? "this conversation"}…</span>
+          <span>Reply · Stage 2</span>
           <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px]">
             <span className="rounded border border-border/60 bg-muted/40 px-1.5 py-0.5">
               R
