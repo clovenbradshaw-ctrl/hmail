@@ -48,11 +48,13 @@ import {
   setArchived,
   setStarred,
   toggleReaction,
+  useConfirmState,
   useConversation,
   useMyMxid,
   type Message,
   type Attachment,
 } from "@/lib/rooms";
+import { VerifyBanner } from "@/components/mail/verify-banner";
 
 const REACTION_PALETTE = ["👍", "❤️", "😂", "🎉", "🤔", "🙏"];
 
@@ -557,6 +559,7 @@ export function MailDisplay() {
   const selectedRoomId = useMailStore((s) => s.selectedRoomId);
   const setSelectedRoomId = useMailStore((s) => s.setSelectedRoomId);
   const conversation = useConversation(selectedRoomId);
+  const confirmState = useConfirmState(selectedRoomId);
   const myMxid = useMyMxid();
   const [collapsedSet, setCollapsedSet] = useState<Set<string>>(new Set());
   const initRoomRef = useRef<string | null>(null);
@@ -703,6 +706,18 @@ export function MailDisplay() {
 
       <Separator />
 
+      {confirmState && (
+        <VerifyBanner
+          roomId={conversation.room_id}
+          state={confirmState}
+          recipientLabel={
+            conversation.participants.map((p) => p.display_name).join(", ") ||
+            confirmState.counterpartyMxid ||
+            "the recipient"
+          }
+        />
+      )}
+
       {/* Messages */}
       <ScrollArea className="flex-1">
         {ordered.length === 0 ? (
@@ -723,7 +738,13 @@ export function MailDisplay() {
         )}
       </ScrollArea>
 
-      <ReplyCard roomId={conversation.room_id} />
+      {confirmState?.status === "awaiting_me" ? (
+        <div className="border-t border-border bg-surface px-4 py-3 text-center text-xs text-muted-foreground sm:px-6">
+          Confirm with the code above to unlock replies.
+        </div>
+      ) : (
+        <ReplyCard roomId={conversation.room_id} />
+      )}
     </div>
   );
 }

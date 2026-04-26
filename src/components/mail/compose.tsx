@@ -5,10 +5,13 @@ import { Button } from "@/components/ui/button";
 import { useMailStore } from "@/hooks/use-mail";
 import {
   composeNewConversation,
+  generateConfirmationCode,
   searchUsers,
+  sendConfirmationRequest,
   useKnownContacts,
   type UserSearchResult,
 } from "@/lib/rooms";
+import { ShareCodeModal } from "@/components/mail/share-code-modal";
 
 export function Compose() {
   const open = useMailStore((s) => s.composeOpen);
@@ -23,6 +26,11 @@ export function Compose() {
   const [directoryHits, setDirectoryHits] = useState<UserSearchResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const debounceRef = useRef<number | null>(null);
+
+  // Post-send confirmation share state.
+  const [shareCode, setShareCode] = useState<string | null>(null);
+  const [shareRecipient, setShareRecipient] = useState<string>("");
+  const [shareOpen, setShareOpen] = useState(false);
 
   const knownContacts = useKnownContacts();
 
@@ -90,7 +98,19 @@ export function Compose() {
         to: trimmed,
         body,
       });
+      // Generate + post the side-channel confirmation request, then surface
+      // the share sheet so the sender can hand it off via SMS / Signal /
+      // WhatsApp / email / etc.
+      const code = generateConfirmationCode(6);
+      try {
+        await sendConfirmationRequest(roomId, code);
+      } catch {
+        /* non-fatal — the banner will let them retry */
+      }
       setSelectedRoomId(roomId);
+      setShareCode(code);
+      setShareRecipient(trimmed);
+      setShareOpen(true);
       setOpen(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -100,6 +120,13 @@ export function Compose() {
   }
 
   return (
+    <>
+    <ShareCodeModal
+      open={shareOpen}
+      onClose={() => setShareOpen(false)}
+      recipient={shareRecipient}
+      code={shareCode ?? ""}
+    />
     <Modal
       open={open}
       onClose={() => !busy && setOpen(false)}
@@ -207,7 +234,7 @@ export function Compose() {
 
         <div className="flex items-center justify-between gap-2 pt-1">
           <span className="text-[10px] text-muted-foreground">
-            Encrypted DM · auto-tagged for hmail
+            Encrypted DM · auto-tagged · code-confirm before chat
           </span>
           <div className="flex gap-2">
             <Button
@@ -225,5 +252,6 @@ export function Compose() {
         </div>
       </form>
     </Modal>
+    </>
   );
 }
