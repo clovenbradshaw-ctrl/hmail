@@ -34,6 +34,10 @@ jobs:
         env:
           VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || '/hmail/' }}
 
+      # SPA fallback: serve the same shell for any unknown path so a hard
+      # refresh on a deep link doesn't 404.
+      - run: cp dist/index.html dist/404.html
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
