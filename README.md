@@ -78,6 +78,12 @@ Every name shown anywhere in hmail (and in any future hyphae app consuming `@hyp
 
 Pushes to `main` build and deploy to GitHub Pages via `.github/workflows/deploy.yml`.
 
+**One-time setup (required) — if the live URL is blank, this is almost always why:**
+
+1. Repo Settings → **Pages** → *Build and deployment* → **Source: GitHub Actions**.
+   The default for new repos is *Deploy from a branch*, which would serve the raw Vite source `index.html` (it references `/src/main.tsx`, which only exists during `vite dev`) → blank page.
+2. Push any commit to `main` (or run the *Deploy to GitHub Pages* workflow manually) to trigger the first Actions deployment.
+
 By default the workflow assumes deployment to `https://<user>.github.io/hmail/` and sets Vite's `base` path accordingly. To deploy to a custom domain:
 
 1. Add a `CNAME` file to `public/` containing the domain (e.g. `hmail.hyphae.intelechia.com`).
