@@ -7,26 +7,21 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { useMailStore } from "@/hooks/use-mail";
-import {
-  MOCK_CONVERSATIONS,
-  type MockConversation,
-} from "@/lib/mock-data";
+import { useConversations, type Conversation } from "@/lib/rooms";
 
 function ConversationCard({
   conversation,
   selected,
   onSelect,
 }: {
-  conversation: MockConversation;
+  conversation: Conversation;
   selected: boolean;
   onSelect: () => void;
 }) {
   const lastMessage = conversation.messages[conversation.messages.length - 1];
   const ts = new Date(conversation.last_activity_ts);
-  const otherParticipants = conversation.participants;
-  const senderLine = otherParticipants
-    .map((p) => p.display_name)
-    .join(", ") || "you";
+  const senderLine =
+    conversation.participants.map((p) => p.display_name).join(", ") || "Empty room";
 
   return (
     <button
@@ -37,7 +32,6 @@ function ConversationCard({
         selected && "bg-accent/70 hover:bg-accent/70",
       )}
     >
-      {/* Unread indicator: a small wax-seal dot, not a chunky badge. */}
       {conversation.unread && (
         <span
           aria-label="unread"
@@ -60,9 +54,7 @@ function ConversationCard({
         <span
           className={cn(
             "shrink-0 font-mono text-[11px]",
-            conversation.unread
-              ? "text-foreground"
-              : "text-muted-foreground",
+            conversation.unread ? "text-foreground" : "text-muted-foreground",
           )}
         >
           {relativeTime(ts)}
@@ -79,10 +71,10 @@ function ConversationCard({
       </div>
 
       <div className="line-clamp-2 w-full text-xs leading-relaxed text-muted-foreground">
-        {lastMessage?.body}
+        {lastMessage?.body || "—"}
       </div>
 
-      {conversation.tags && conversation.tags.length > 0 && (
+      {conversation.tags.length > 0 && (
         <div className="mt-1 flex flex-wrap gap-1">
           {conversation.tags.map((t) => (
             <Badge
@@ -102,23 +94,25 @@ function ConversationCard({
 export function MailList() {
   const selectedRoomId = useMailStore((s) => s.selectedRoomId);
   const setSelectedRoomId = useMailStore((s) => s.setSelectedRoomId);
+  const folder = useMailStore((s) => s.folder);
+  const all = useConversations();
 
-  const sorted = useMemo(
-    () =>
-      [...MOCK_CONVERSATIONS].sort(
-        (a, b) =>
-          new Date(b.last_activity_ts).getTime() -
-          new Date(a.last_activity_ts).getTime(),
-      ),
-    [],
-  );
-  const unread = sorted.filter((c) => c.unread);
+  const filtered = useMemo(() => {
+    if (folder === "starred") return all.filter((c) => c.starred);
+    if (folder === "archive") return all.filter((c) => c.archived);
+    return all.filter((c) => !c.archived);
+  }, [all, folder]);
+
+  const unread = filtered.filter((c) => c.unread);
+
+  const folderTitle =
+    folder === "starred" ? "Starred" : folder === "archive" ? "Archive" : "Inbox";
 
   return (
     <Tabs defaultValue="all" className="flex h-full flex-col">
       <div className="flex items-center justify-between gap-3 px-4 pt-4">
         <h1 className="font-display text-xl font-medium tracking-tight">
-          Inbox
+          {folderTitle}
         </h1>
         <TabsList className="h-7 p-0.5">
           <TabsTrigger value="all" className="h-6 px-2 text-xs">
@@ -137,6 +131,7 @@ export function MailList() {
             <Input
               placeholder="Search conversations…"
               className="pl-8 font-sans"
+              disabled
             />
           </div>
         </form>
@@ -146,14 +141,20 @@ export function MailList() {
       <TabsContent value="all" className="m-0 flex-1 overflow-hidden">
         <ScrollArea className="h-full">
           <div>
-            {sorted.map((c) => (
-              <ConversationCard
-                key={c.room_id}
-                conversation={c}
-                selected={c.room_id === selectedRoomId}
-                onSelect={() => setSelectedRoomId(c.room_id)}
-              />
-            ))}
+            {filtered.length === 0 ? (
+              <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+                No conversations.
+              </div>
+            ) : (
+              filtered.map((c) => (
+                <ConversationCard
+                  key={c.room_id}
+                  conversation={c}
+                  selected={c.room_id === selectedRoomId}
+                  onSelect={() => setSelectedRoomId(c.room_id)}
+                />
+              ))
+            )}
           </div>
         </ScrollArea>
       </TabsContent>
