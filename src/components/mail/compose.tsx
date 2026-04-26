@@ -22,6 +22,33 @@ import { ShareCodeModal } from "@/components/mail/share-code-modal";
 
 type WindowState = "normal" | "minimized" | "fullscreen";
 
+function describeComposeError(err: unknown, recipient: string): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  const e = err as { errcode?: string; httpStatus?: number };
+  const errcode = e?.errcode;
+  const recipientServer = recipient.includes(":")
+    ? recipient.slice(recipient.indexOf(":") + 1)
+    : "";
+  if (errcode === "M_NOT_FOUND")
+    return `Couldn't find ${recipient}. Double-check the address.`;
+  if (errcode === "M_FORBIDDEN")
+    return "Your homeserver refused to send the invite. The recipient's server may not federate with yours.";
+  if (errcode === "M_LIMIT_EXCEEDED")
+    return "Rate-limited by your homeserver. Wait a moment and try again.";
+  if (
+    e?.httpStatus === 502 ||
+    e?.httpStatus === 503 ||
+    e?.httpStatus === 504 ||
+    /Can't connect to server/i.test(msg)
+  ) {
+    const target = recipientServer || "the recipient's homeserver";
+    return `Your homeserver couldn't reach ${target} to deliver the invite. The address may be wrong, or that server is offline or doesn't federate. Verify the recipient and try again later.`;
+  }
+  if (/Failed to fetch|NetworkError/i.test(msg))
+    return "Couldn't reach your homeserver. Check your connection and try again.";
+  return msg || "Something went wrong sending your message.";
+}
+
 export function Compose() {
   const open = useMailStore((s) => s.composeOpen);
   const setOpen = useMailStore((s) => s.setComposeOpen);
@@ -129,7 +156,7 @@ export function Compose() {
       setShareOpen(true);
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(describeComposeError(err, to.trim()));
     } finally {
       setBusy(false);
     }
