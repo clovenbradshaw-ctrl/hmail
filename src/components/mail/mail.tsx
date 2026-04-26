@@ -4,6 +4,8 @@ import { MailList } from "@/components/mail/mail-list";
 import { MailDisplay } from "@/components/mail/mail-display";
 import { Compose } from "@/components/mail/compose";
 import { ManageRooms } from "@/components/mail/manage-rooms";
+import { VerifyModal } from "@/components/auth/verify-modal";
+import { KeyBackupBanner } from "@/components/auth/key-backup-banner";
 import { useMailStore } from "@/hooks/use-mail";
 import { cn } from "@/lib/utils";
 
@@ -15,18 +17,24 @@ export function Mail() {
   return (
     <TooltipProvider delayDuration={200}>
       {/* Desktop: fixed sidebar + main */}
-      <div className="hidden h-screen md:flex">
-        <aside className="w-60 shrink-0 border-r border-border bg-surface">
-          <Sidebar />
-        </aside>
-        <main className="flex-1 min-w-0 bg-background">
-          {selectedRoomId ? <MailDisplay /> : <MailList />}
-        </main>
+      <div className="hidden h-screen flex-col md:flex">
+        <KeyBackupBanner />
+        <div className="flex min-h-0 flex-1">
+          <aside className="w-60 shrink-0 border-r border-border bg-surface">
+            <Sidebar />
+          </aside>
+          <main className="flex-1 min-w-0 bg-background">
+            {selectedRoomId ? <MailDisplay /> : <MailList />}
+          </main>
+        </div>
       </div>
 
       {/* Mobile: single-pane navigation */}
       <div className="flex h-screen flex-col md:hidden">
-        {selectedRoomId ? <MailDisplay /> : <MailList />}
+        <KeyBackupBanner />
+        <div className="min-h-0 flex-1">
+          {selectedRoomId ? <MailDisplay /> : <MailList />}
+        </div>
       </div>
 
       {/* Mobile sidebar drawer */}
@@ -52,6 +60,7 @@ export function Mail() {
 
       <Compose />
       <ManageRooms />
+      <VerifyModal />
     </TooltipProvider>
   );
 }
