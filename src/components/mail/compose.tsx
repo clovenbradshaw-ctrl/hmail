@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Modal } from "@/components/ui/modal";
-import { Input } from "@/components/ui/input";
+import {
+  Maximize2,
+  Minimize2,
+  Minus,
+  Paperclip,
+  Trash2,
+  X,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useMailStore } from "@/hooks/use-mail";
 import {
@@ -12,6 +19,8 @@ import {
   type UserSearchResult,
 } from "@/lib/rooms";
 import { ShareCodeModal } from "@/components/mail/share-code-modal";
+
+type WindowState = "normal" | "minimized" | "fullscreen";
 
 export function Compose() {
   const open = useMailStore((s) => s.composeOpen);
@@ -25,6 +34,7 @@ export function Compose() {
   const [error, setError] = useState<string | null>(null);
   const [directoryHits, setDirectoryHits] = useState<UserSearchResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [windowState, setWindowState] = useState<WindowState>("normal");
   const debounceRef = useRef<number | null>(null);
 
   // Post-send confirmation share state.
@@ -34,8 +44,6 @@ export function Compose() {
 
   const knownContacts = useKnownContacts();
 
-  // Combined suggestions: known contacts (already in your rooms) + directory hits.
-  // Filtered by the current `to` query.
   const suggestions = useMemo(() => {
     const q = to.trim().toLowerCase();
     const known: (UserSearchResult & { source: "known" | "directory" })[] =
@@ -67,6 +75,7 @@ export function Compose() {
       setError(null);
       setDirectoryHits([]);
       setShowSuggestions(false);
+      setWindowState("normal");
     }
   }, [open]);
 
@@ -84,6 +93,16 @@ export function Compose() {
     };
   }, [to]);
 
+  function discard() {
+    if (busy) return;
+    if (
+      (to || subject || body) &&
+      !window.confirm("Discard this draft?")
+    )
+      return;
+    setOpen(false);
+  }
+
   async function onSend(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -98,9 +117,6 @@ export function Compose() {
         to: trimmed,
         body,
       });
-      // Generate + post the side-channel confirmation request, then surface
-      // the share sheet so the sender can hand it off via SMS / Signal /
-      // WhatsApp / email / etc.
       const code = generateConfirmationCode(6);
       try {
         await sendConfirmationRequest(roomId, code);
@@ -119,139 +135,247 @@ export function Compose() {
     }
   }
 
+  if (!open) {
+    return (
+      <ShareCodeModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        recipient={shareRecipient}
+        code={shareCode ?? ""}
+      />
+    );
+  }
+
+  const headerTitle = subject.trim() || to.trim() || "New Message";
+
   return (
     <>
-    <ShareCodeModal
-      open={shareOpen}
-      onClose={() => setShareOpen(false)}
-      recipient={shareRecipient}
-      code={shareCode ?? ""}
-    />
-    <Modal
-      open={open}
-      onClose={() => !busy && setOpen(false)}
-      title="New conversation"
-      className="sm:max-w-xl"
-    >
-      <form onSubmit={onSend} className="flex flex-col gap-3 p-5">
-        <label className="block">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">
-            To
-          </span>
-          <div className="relative">
-            <Input
-              autoFocus
-              placeholder="@alice:matrix.org"
-              value={to}
-              onChange={(e) => {
-                setTo(e.target.value);
-                setShowSuggestions(true);
-              }}
-              onFocus={() => setShowSuggestions(true)}
-              onBlur={() => {
-                // Delay so click on suggestion still registers.
-                window.setTimeout(() => setShowSuggestions(false), 150);
-              }}
-              disabled={busy}
-              className="font-mono text-sm"
-            />
-            {showSuggestions && suggestions.length > 0 && (
-              <ul className="absolute z-10 mt-1 max-h-72 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-lg">
-                {suggestions.map((u) => (
-                  <li key={u.user_id}>
-                    <button
-                      type="button"
-                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => {
-                        setTo(u.user_id);
-                        setShowSuggestions(false);
-                      }}
-                    >
-                      <span className="flex min-w-0 flex-col">
-                        <span className="truncate font-medium">
-                          {u.display_name || u.user_id}
-                        </span>
-                        <span className="truncate font-mono text-[10px] text-muted-foreground">
-                          {u.user_id}
-                        </span>
-                      </span>
-                      <span
-                        className={
-                          "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider " +
-                          (u.source === "known"
-                            ? "bg-selected text-selected-foreground"
-                            : "bg-muted text-muted-foreground")
-                        }
-                      >
-                        {u.source === "known" ? "Known" : "Directory"}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-          {!to && knownContacts.length > 0 && (
-            <span className="mt-1 block text-[10px] text-muted-foreground">
-              Suggestions show people you share rooms with. Type to search the
-              wider directory.
-            </span>
-          )}
-        </label>
+      <ShareCodeModal
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        recipient={shareRecipient}
+        code={shareCode ?? ""}
+      />
 
-        <label className="block">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">
-            Subject
-          </span>
-          <Input
-            placeholder="What's this about?"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            disabled={busy}
-          />
-        </label>
+      {windowState === "fullscreen" && (
+        <div
+          aria-hidden
+          className="fixed inset-0 z-40 bg-black/30"
+          onClick={() => setWindowState("normal")}
+        />
+      )}
 
-        <label className="block">
-          <span className="mb-1 block text-xs font-medium text-muted-foreground">
-            Message
-          </span>
-          <textarea
-            rows={6}
-            placeholder="Your message…"
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            disabled={busy}
-            className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          />
-        </label>
-
-        {error && (
-          <div className="rounded border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
-            {error}
-          </div>
+      <div
+        role="dialog"
+        aria-modal={windowState === "fullscreen"}
+        aria-label="New message"
+        className={cn(
+          "fixed z-50 flex flex-col bg-card text-card-foreground shadow-2xl",
+          // Mobile baseline: the compose window owns the screen.
+          windowState === "minimized"
+            ? "bottom-0 right-0 left-0 sm:left-auto sm:right-6 sm:w-[320px] rounded-t-md sm:rounded-t-md sm:rounded-b-none"
+            : windowState === "fullscreen"
+              ? "inset-2 sm:inset-8 rounded-lg"
+              : "inset-x-0 bottom-0 top-0 sm:inset-auto sm:bottom-0 sm:right-6 sm:top-auto sm:w-[540px] sm:max-h-[min(640px,calc(100vh-72px))] sm:rounded-t-lg",
         )}
-
-        <div className="flex items-center justify-between gap-2 pt-1">
-          <span className="text-[10px] text-muted-foreground">
-            Encrypted DM · auto-tagged · code-confirm before chat
+      >
+        {/* Header bar */}
+        <div
+          onClick={() => {
+            if (windowState === "minimized") setWindowState("normal");
+          }}
+          className={cn(
+            "flex shrink-0 items-center justify-between gap-2 bg-foreground/95 px-3 py-2 text-background",
+            windowState === "minimized" && "cursor-pointer",
+            windowState === "fullscreen"
+              ? "rounded-t-lg"
+              : windowState === "minimized"
+                ? "rounded-t-md"
+                : "sm:rounded-t-lg",
+          )}
+        >
+          <span className="truncate text-[13px] font-semibold">
+            {windowState === "minimized" ? headerTitle : "New Message"}
           </span>
-          <div className="flex gap-2">
-            <Button
+          <div className="flex shrink-0 items-center gap-0.5">
+            <button
               type="button"
-              variant="ghost"
-              onClick={() => setOpen(false)}
-              disabled={busy}
+              aria-label={windowState === "minimized" ? "Expand" : "Minimize"}
+              onClick={(e) => {
+                e.stopPropagation();
+                setWindowState(
+                  windowState === "minimized" ? "normal" : "minimized",
+                );
+              }}
+              className="rounded p-1 hover:bg-white/10"
             >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={busy}>
-              {busy ? "Sending…" : "Send"}
-            </Button>
+              <Minus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label={
+                windowState === "fullscreen" ? "Exit full screen" : "Full screen"
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                setWindowState(
+                  windowState === "fullscreen" ? "normal" : "fullscreen",
+                );
+              }}
+              className="hidden rounded p-1 hover:bg-white/10 sm:inline-flex"
+            >
+              {windowState === "fullscreen" ? (
+                <Minimize2 className="h-3.5 w-3.5" />
+              ) : (
+                <Maximize2 className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={(e) => {
+                e.stopPropagation();
+                discard();
+              }}
+              className="rounded p-1 hover:bg-white/10"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
         </div>
-      </form>
-    </Modal>
+
+        {windowState !== "minimized" && (
+          <form
+            onSubmit={onSend}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {/* Recipient row */}
+            <div className="relative border-b border-border px-3 py-1.5">
+              <label className="flex items-center gap-2">
+                <span className="w-12 shrink-0 text-xs text-muted-foreground">
+                  To
+                </span>
+                <input
+                  autoFocus
+                  placeholder="@alice:matrix.org"
+                  value={to}
+                  onChange={(e) => {
+                    setTo(e.target.value);
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => {
+                    window.setTimeout(() => setShowSuggestions(false), 150);
+                  }}
+                  disabled={busy}
+                  className="w-full bg-transparent py-1 font-mono text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                />
+              </label>
+              {showSuggestions && suggestions.length > 0 && (
+                <ul className="absolute left-3 right-3 top-full z-10 mt-1 max-h-72 overflow-y-auto rounded-md border border-border bg-popover shadow-lg">
+                  {suggestions.map((u) => (
+                    <li key={u.user_id}>
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setTo(u.user_id);
+                          setShowSuggestions(false);
+                        }}
+                      >
+                        <span className="flex min-w-0 flex-col">
+                          <span className="truncate font-medium">
+                            {u.display_name || u.user_id}
+                          </span>
+                          <span className="truncate font-mono text-[10px] text-muted-foreground">
+                            {u.user_id}
+                          </span>
+                        </span>
+                        <span
+                          className={cn(
+                            "shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wider",
+                            u.source === "known"
+                              ? "bg-selected text-selected-foreground"
+                              : "bg-muted text-muted-foreground",
+                          )}
+                        >
+                          {u.source === "known" ? "Known" : "Directory"}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {/* Subject row */}
+            <div className="border-b border-border px-3 py-1.5">
+              <label className="flex items-center gap-2">
+                <span className="sr-only">Subject</span>
+                <input
+                  placeholder="Subject"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value)}
+                  disabled={busy}
+                  className="w-full bg-transparent py-1 text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                />
+              </label>
+            </div>
+
+            {/* Body */}
+            <div className="flex min-h-0 flex-1 flex-col px-3 pt-2">
+              <textarea
+                placeholder="Your message…"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                disabled={busy}
+                className="w-full flex-1 resize-none bg-transparent py-1 text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+              />
+              {error && (
+                <div className="mb-2 rounded border border-destructive/40 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  {error}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface/40 px-3 py-2">
+              <div className="flex items-center gap-1">
+                <Button
+                  type="submit"
+                  disabled={busy}
+                  className="rounded-sm bg-seal px-5 py-1.5 text-xs font-bold uppercase tracking-wider text-seal-foreground shadow-sm hover:brightness-95"
+                >
+                  {busy ? "Sending…" : "Send"}
+                </Button>
+                <button
+                  type="button"
+                  disabled
+                  aria-label="Attach (soon)"
+                  className="rounded-full p-2 text-muted-foreground/50"
+                >
+                  <Paperclip className="h-4 w-4" />
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="hidden text-[10px] text-muted-foreground sm:inline">
+                  encrypted · code-confirm
+                </span>
+                <button
+                  type="button"
+                  onClick={discard}
+                  disabled={busy}
+                  aria-label="Discard draft"
+                  className="rounded-full p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          </form>
+        )}
+      </div>
     </>
   );
 }

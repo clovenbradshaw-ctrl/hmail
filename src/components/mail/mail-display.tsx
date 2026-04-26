@@ -593,13 +593,27 @@ export function MailDisplay() {
   }, [conversation]);
 
   if (!conversation) {
+    const loading = !!selectedRoomId;
     return (
-      <div className="hidden h-full items-center justify-center bg-background md:flex">
-        <div className="text-center">
-          <div className="text-4xl italic text-muted-foreground/40">h</div>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Select a conversation
-          </p>
+      <div className="flex h-full flex-col bg-background">
+        {loading && (
+          <div className="flex items-center gap-2 px-3 py-3 sm:px-6 sm:py-4 md:hidden">
+            <button
+              aria-label="Back"
+              onClick={() => setSelectedRoomId(null)}
+              className="rounded-full p-2 hover:bg-accent"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+          </div>
+        )}
+        <div className="flex flex-1 items-center justify-center">
+          <div className="text-center">
+            <div className="text-4xl italic text-muted-foreground/40">h</div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {loading ? "Opening conversation…" : "Select a conversation"}
+            </p>
+          </div>
         </div>
       </div>
     );
