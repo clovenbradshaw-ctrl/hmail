@@ -174,15 +174,18 @@ export function Compose() {
       for (const f of files) {
         await sendAttachment(roomId, f, [trimmed]);
       }
-      // Identity-verification "confirmation request" still fires in the
-      // background, but the code surfaced to the sender in the share modal is
-      // the encryption passphrase — that's what the recipient must enter to
-      // unlock the message body.
-      try {
-        await sendConfirmationRequest(roomId, generateConfirmationCode(6));
-      } catch {
-        /* non-fatal — the banner will let them retry */
-      }
+      // Identity-verification "confirmation request" fires in the background,
+      // but the code surfaced to the sender in the share modal is the
+      // encryption passphrase — that's what the recipient must enter to
+      // unlock the message body. Fire-and-forget: sendEvent encrypts in
+      // encrypted rooms and can hang when the invitee's homeserver isn't
+      // reachable; the verify banner offers a retry once the conversation is
+      // open.
+      void sendConfirmationRequest(roomId, generateConfirmationCode(6)).catch(
+        () => {
+          /* non-fatal — banner offers retry */
+        },
+      );
       setSelectedRoomId(roomId);
       setShareCode(pendingCode ? pendingCode.passphrase : null);
       setShareRecipient(trimmed);
