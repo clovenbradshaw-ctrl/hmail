@@ -388,7 +388,10 @@ export function useConversations(): Conversation[] {
 }
 
 export function useConversation(roomId: string | null): Conversation | null {
-  const all = useConversations();
+  // Look across ALL rooms, not just hmail-tagged ones — when the user has just
+  // composed a new conversation, the HMAIL_TAG round-trip can lag the room
+  // creation, and we don't want the screen to go blank in that window.
+  const all = useAllConversations();
   return useMemo(
     () => (roomId ? all.find((c) => c.room_id === roomId) ?? null : null),
     [all, roomId],
