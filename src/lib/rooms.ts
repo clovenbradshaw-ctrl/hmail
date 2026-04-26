@@ -107,6 +107,15 @@ function localpart(mxid: string): string {
   return m ? m[1] : mxid;
 }
 
+// Some events flow through the SDK without a valid origin_server_ts (local
+// echo, malformed federated events). `new Date(undefined/NaN).toISOString()`
+// throws RangeError, which crashes the entire conversation snapshot mid-
+// render and leaves the screen blank.
+function safeIso(ts: unknown): string {
+  const n = typeof ts === "number" && Number.isFinite(ts) ? ts : 0;
+  return new Date(n).toISOString();
+}
+
 function monogramFor(name: string): string {
   const trimmed = name.trim();
   if (!trimmed) return "?";
@@ -221,7 +230,7 @@ function editsFor(room: Room, ev: MatrixEvent): EditEntry[] {
         | undefined;
       return {
         body: typeof newContent?.body === "string" ? (newContent.body as string) : rawBody(e.getContent()),
-        ts: new Date(e.getTs()).toISOString(),
+        ts: safeIso(e.getTs()),
       };
     })
     .sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
@@ -270,7 +279,7 @@ function eventToMessage(
         granted_ts:
           typeof accessRaw.granted_ts === "string"
             ? accessRaw.granted_ts
-            : new Date(ev.getTs()).toISOString(),
+            : safeIso(ev.getTs()),
       };
     }
     attachment = {
@@ -287,7 +296,7 @@ function eventToMessage(
     event_id: ev.getId() ?? `${ev.getTs()}`,
     sender: senderFor(client, room, senderMxid),
     body: effectiveBody(ev),
-    ts: new Date(ev.getTs()).toISOString(),
+    ts: safeIso(ev.getTs()),
     thread_root: isThreadReply ? relation?.event_id : undefined,
     is_thread_reply: isThreadReply,
     decryption_failed: ev.isDecryptionFailure(),
@@ -348,7 +357,7 @@ function roomToConversation(client: MatrixClient, room: Room): Conversation {
   }
   const lastTs =
     messages[messages.length - 1]?.ts ??
-    new Date(room.getLastActiveTimestamp() || 0).toISOString();
+    safeIso(room.getLastActiveTimestamp() || 0);
 
   const myUserId = client.getUserId();
   const participants: Sender[] = room
@@ -832,7 +841,7 @@ export function getConfirmState(client: MatrixClient, room: Room): ConfirmState 
       request = {
         event_id: ev.getId() ?? "",
         sender: ev.getSender() ?? "",
-        ts: new Date(ev.getTs()).toISOString(),
+        ts: safeIso(ev.getTs()),
         code_hash: c.code_hash,
       };
       requestEventId = request.event_id;
@@ -848,7 +857,7 @@ export function getConfirmState(client: MatrixClient, room: Room): ConfirmState 
       if (c?.kind === "proof" && c.for === requestEventId) {
         proof = {
           sender: ev.getSender() ?? "",
-          ts: new Date(ev.getTs()).toISOString(),
+          ts: safeIso(ev.getTs()),
         };
         break;
       }
