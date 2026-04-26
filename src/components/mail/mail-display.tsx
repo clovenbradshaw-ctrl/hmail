@@ -19,6 +19,7 @@ import {
   X,
   FileIcon,
   Download,
+  Lock,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -43,6 +44,7 @@ import {
   editMessage,
   markRoomRead,
   retractMessage,
+  sendCodedThreadReply,
   sendThreadReply,
   sendAttachment,
   setArchived,
@@ -54,7 +56,12 @@ import {
   type Message,
   type Attachment,
 } from "@/lib/rooms";
+import { getClient } from "@/lib/matrix";
 import { VerifyBanner } from "@/components/mail/verify-banner";
+import {
+  CodeComposeModal,
+  CodeUnlockModal,
+} from "@/components/mail/coded-modals";
 
 const REACTION_PALETTE = ["👍", "❤️", "😂", "🎉", "🤔", "🙏"];
 
@@ -208,7 +215,9 @@ function MessageCard({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.body);
   const [showReact, setShowReact] = useState(false);
+  const [unlockOpen, setUnlockOpen] = useState(false);
   const muted = message.decryption_failed || message.redacted;
+  const locked = !!message.coded?.locked;
 
   async function commitEdit() {
     if (draft.trim() && draft !== message.body) {
@@ -329,6 +338,24 @@ function MessageCard({
               </Button>
             </div>
           </div>
+        ) : locked && message.coded ? (
+          <button
+            type="button"
+            onClick={() => setUnlockOpen(true)}
+            className="flex w-full items-center gap-3 rounded-md border border-dashed border-border bg-surface px-3 py-3 text-left text-sm transition hover:bg-accent"
+          >
+            <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <span className="flex min-w-0 flex-col">
+              <span className="font-medium">Coded message — click to unlock</span>
+              <span className="text-xs text-muted-foreground">
+                {message.coded.scope === "always"
+                  ? "Locked with this contact's always-code"
+                  : message.coded.scope === "thread"
+                    ? "Locked with this conversation's code"
+                    : "Locked with a one-time code"}
+              </span>
+            </span>
+          </button>
         ) : (
           <div
             className={cn(
@@ -338,6 +365,23 @@ function MessageCard({
           >
             {message.body}
           </div>
+        )}
+
+        {message.coded && (
+          <CodeUnlockModal
+            open={unlockOpen}
+            onClose={() => setUnlockOpen(false)}
+            client={getClient()}
+            payload={message.coded.payload}
+            eventId={message.event_id}
+            scopeKey={
+              message.coded.scope === "always"
+                ? message.sender.mxid
+                : message.coded.scope === "thread"
+                  ? roomId
+                  : message.event_id
+            }
+          />
         )}
 
         {message.attachment && <AttachmentBlock attachment={message.attachment} />}
@@ -402,6 +446,11 @@ function ReplyCard({ roomId }: { roomId: string }) {
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [codePickerOpen, setCodePickerOpen] = useState(false);
+  const [pendingCode, setPendingCode] = useState<{
+    scope: "always" | "thread" | "message";
+    passphrase: string;
+  } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -419,12 +468,24 @@ function ReplyCard({ roomId }: { roomId: string }) {
     if (!text && files.length === 0) return;
     setBusy(true);
     try {
-      if (text) await sendThreadReply(roomId, text);
+      if (text) {
+        if (pendingCode) {
+          await sendCodedThreadReply(
+            roomId,
+            text,
+            pendingCode.passphrase,
+            pendingCode.scope,
+          );
+        } else {
+          await sendThreadReply(roomId, text);
+        }
+      }
       for (const f of files) {
         await sendAttachment(roomId, f);
       }
       setBody("");
       setFiles([]);
+      setPendingCode(null);
       setOpen(false);
     } finally {
       setBusy(false);
@@ -463,6 +524,11 @@ function ReplyCard({ roomId }: { roomId: string }) {
 
   return (
     <div className="border-t border-border bg-background px-3 py-3 sm:px-6">
+      <CodeComposeModal
+        open={codePickerOpen}
+        onClose={() => setCodePickerOpen(false)}
+        onPick={(picked) => setPendingCode(picked)}
+      />
       <div className="rounded-2xl border border-border bg-surface shadow-sm">
         <textarea
           ref={ref}
@@ -522,6 +588,34 @@ function ReplyCard({ roomId }: { roomId: string }) {
               </TooltipTrigger>
               <TooltipContent>Attach</TooltipContent>
             </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={() =>
+                    pendingCode ? setPendingCode(null) : setCodePickerOpen(true)
+                  }
+                  disabled={busy}
+                  aria-pressed={!!pendingCode}
+                  className={cn(
+                    "rounded-full p-2",
+                    pendingCode
+                      ? "bg-selected text-selected-foreground hover:brightness-95"
+                      : "text-muted-foreground hover:bg-accent",
+                  )}
+                >
+                  <Lock className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {pendingCode ? `Coded (${pendingCode.scope}) — click to remove` : "Lock with a code"}
+              </TooltipContent>
+            </Tooltip>
+            {pendingCode && (
+              <span className="ml-1 hidden font-mono text-[10px] text-muted-foreground sm:inline">
+                {pendingCode.scope}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <span className="hidden text-[10px] text-muted-foreground sm:inline">

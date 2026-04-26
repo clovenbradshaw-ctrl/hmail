@@ -10,6 +10,20 @@ import {
   RoomMemberEvent,
 } from "matrix-js-sdk";
 import { getClient, subscribe } from "@/lib/matrix";
+import {
+  CODED_BODY_FALLBACK,
+  CODED_CONTENT_KEY,
+  encodeMessage,
+  extractCodedPayload,
+  type CodeScope,
+  type CodedPayload,
+} from "@/lib/coded";
+import {
+  getDecodedBody,
+  subscribeDecoded,
+  tryAutoDecode,
+} from "@/lib/coded-runtime";
+import { rememberCodeInMemory } from "@/lib/coded-vault";
 
 export interface Sender {
   mxid: string;
@@ -82,6 +96,17 @@ export interface Message {
   /** Whether the current user authored this message. */
   is_mine: boolean;
   attachment?: Attachment;
+  /**
+   * Present iff this message has an hmail coded layer (passphrase-gated
+   * encryption sitting *inside* the Matrix-encrypted content). When `locked`
+   * is true, `body` is the wire-fallback stub; when false, `body` is the
+   * decoded plaintext from the runtime cache.
+   */
+  coded?: {
+    scope: CodeScope;
+    locked: boolean;
+    payload: CodedPayload;
+  };
 }
 
 export interface Conversation {
@@ -271,6 +296,23 @@ function eventToMessage(
   const edits = editsFor(room, ev);
   const content = ev.getContent() as Record<string, unknown> | undefined;
   const msgtype = content?.msgtype as string | undefined;
+
+  // Coded layer: detect the inner payload, kick off an auto-decode if we
+  // already hold a passphrase for the scope, and override the rendered body
+  // with the decoded plaintext when available.
+  const eventId = ev.getId();
+  const codedPayload = extractCodedPayload(content);
+  let coded: Message["coded"];
+  let codedDecodedBody: string | undefined;
+  if (codedPayload && eventId) {
+    tryAutoDecode(eventId, codedPayload, senderMxid, room.roomId);
+    codedDecodedBody = getDecodedBody(eventId);
+    coded = {
+      scope: codedPayload.scope,
+      locked: codedDecodedBody === undefined,
+      payload: codedPayload,
+    };
+  }
   let attachment: Attachment | undefined;
   if (!ev.isRedacted() && (msgtype === MsgType.Image || msgtype === MsgType.File)) {
     const info = (content?.info ?? {}) as { mimetype?: string; size?: number };
@@ -308,7 +350,7 @@ function eventToMessage(
   return {
     event_id: ev.getId() ?? `${ev.getTs()}`,
     sender: senderFor(client, room, senderMxid),
-    body: effectiveBody(ev),
+    body: codedDecodedBody ?? effectiveBody(ev),
     ts: safeIso(ev.getTs()),
     thread_root: isThreadReply ? relation?.event_id : undefined,
     is_thread_reply: isThreadReply,
@@ -320,6 +362,7 @@ function eventToMessage(
     edits,
     is_mine: senderMxid === myUserId,
     attachment,
+    coded,
   };
 }
 
@@ -426,7 +469,7 @@ function getConversationsSnapshot(): Conversation[] {
 
 /** All rooms regardless of hmail tag — for the Manage Rooms modal. */
 export function useAllConversations(): Conversation[] {
-  return useSyncExternalStore(subscribe, getStableConversations, () => EMPTY);
+  return useSyncExternalStore(subscribeRoomsAndCodes, getStableConversations, () => EMPTY);
 }
 
 /** Only rooms tagged into hmail. */
@@ -445,9 +488,23 @@ function snapshotFingerprint(convs: Conversation[]): string {
   return convs
     .map(
       (c) =>
-        `${c.room_id}:${c.last_activity_ts}:${c.unread ? 1 : 0}:${c.starred ? 1 : 0}:${c.archived ? 1 : 0}:${c.in_hmail ? 1 : 0}:${c.messages.length}:${c.messages.map((m) => `${m.event_id}!${m.status}!${m.edited ? "e" : ""}!${m.reactions.length}`).join(",")}`,
+        `${c.room_id}:${c.last_activity_ts}:${c.unread ? 1 : 0}:${c.starred ? 1 : 0}:${c.archived ? 1 : 0}:${c.in_hmail ? 1 : 0}:${c.messages.length}:${c.messages.map((m) => `${m.event_id}!${m.status}!${m.edited ? "e" : ""}!${m.reactions.length}!${m.coded ? (m.coded.locked ? "L" : "U") : ""}`).join(",")}`,
     )
     .join("|");
+}
+
+/**
+ * Combined subscriber that fires on Matrix client events (timeline, sync,
+ * etc.) *and* on coded-runtime cache changes (auto-decode completed, user
+ * entered a passphrase). Both feed the conversation snapshot.
+ */
+function subscribeRoomsAndCodes(cb: () => void): () => void {
+  const a = subscribe(cb);
+  const b = subscribeDecoded(cb);
+  return () => {
+    a();
+    b();
+  };
 }
 
 function getStableConversations(): Conversation[] {
@@ -638,6 +695,8 @@ export async function composeNewConversation(opts: {
   subject: string;
   to: string;
   body: string;
+  /** If set, the initial body is encrypted under hmail's coded layer. */
+  coded?: { passphrase: string; scope: CodeScope };
 }): Promise<string> {
   const client = getClient();
   if (!client) throw new Error("Not signed in.");
@@ -684,10 +743,28 @@ export async function composeNewConversation(opts: {
     /* non-fatal */
   }
   if (opts.body.trim()) {
-    await client.sendMessage(roomId, {
-      msgtype: MsgType.Text,
-      body: opts.body,
-    });
+    if (opts.coded) {
+      const payload = await encodeMessage(
+        opts.body,
+        opts.coded.passphrase,
+        opts.coded.scope,
+      );
+      rememberCodedSenderKey(client, roomId, opts.coded.scope, opts.coded.passphrase);
+      // The SDK's RoomMessageEventContent type doesn't allow our custom
+      // io.hmail.coded field; same cast escape-hatch as sendAttachment uses
+      // for MEDIA_ACCESS_KEY.
+      type SendMsgFn = (roomId: string, content: unknown) => Promise<unknown>;
+      await (client.sendMessage as unknown as SendMsgFn)(roomId, {
+        msgtype: MsgType.Text,
+        body: CODED_BODY_FALLBACK,
+        [CODED_CONTENT_KEY]: payload,
+      });
+    } else {
+      await client.sendMessage(roomId, {
+        msgtype: MsgType.Text,
+        body: opts.body,
+      });
+    }
   }
   return roomId;
 }
@@ -717,6 +794,70 @@ export async function sendFlatMessage(roomId: string, body: string) {
   const client = getClient();
   if (!client) throw new Error("Not signed in.");
   await client.sendMessage(roomId, { msgtype: MsgType.Text, body });
+}
+
+/**
+ * Encrypt `body` with `passphrase` under hmail's coded layer, then send it
+ * through Matrix as a normal message. The wire body is the locked-stub
+ * fallback so non-hmail clients see something sensible; the inner
+ * `io.hmail.coded` field carries the AES-GCM ciphertext.
+ *
+ * Also stashes the passphrase in the local in-memory cache for the matching
+ * scope so the *sender* can read their own sent message back without
+ * re-typing the code.
+ */
+export async function sendCodedThreadReply(
+  roomId: string,
+  body: string,
+  passphrase: string,
+  scope: CodeScope,
+): Promise<void> {
+  const client = getClient();
+  if (!client) throw new Error("Not signed in.");
+  const room = client.getRoom(roomId);
+  if (!room) throw new Error("Unknown room.");
+  const payload = await encodeMessage(body, passphrase, scope);
+  const baseContent = {
+    msgtype: MsgType.Text,
+    body: CODED_BODY_FALLBACK,
+    [CODED_CONTENT_KEY]: payload,
+  };
+  rememberCodedSenderKey(client, roomId, scope, passphrase);
+  // SDK type doesn't permit our custom field; cast escape-hatch matches the
+  // existing sendAttachment pattern.
+  type SendMsgFn = (
+    roomId: string,
+    threadIdOrContent: unknown,
+    content?: unknown,
+  ) => Promise<unknown>;
+  const send = client.sendMessage as unknown as SendMsgFn;
+  const rootId = rootEventIdFor(room);
+  if (!rootId) {
+    await send(roomId, baseContent);
+    return;
+  }
+  await send(roomId, rootId, {
+    ...baseContent,
+    "m.relates_to": { rel_type: RelationType.Thread, event_id: rootId },
+  });
+}
+
+/** Pick the right cache key for a scope, then remember the sender's own copy. */
+function rememberCodedSenderKey(
+  client: MatrixClient,
+  roomId: string,
+  scope: CodeScope,
+  passphrase: string,
+) {
+  if (scope === "always") {
+    // "Always" is keyed by the *other* party from the recipient's viewpoint;
+    // for the sender it's keyed by the recipient (the DM counterparty).
+    const room = client.getRoom(roomId);
+    const other = room?.guessDMUserId();
+    if (other) rememberCodeInMemory("always", other, passphrase);
+  } else if (scope === "thread") {
+    rememberCodeInMemory("thread", roomId, passphrase);
+  }
 }
 
 export async function editMessage(

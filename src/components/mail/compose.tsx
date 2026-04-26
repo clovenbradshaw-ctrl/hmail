@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Lock,
   Maximize2,
   Minimize2,
   Minus,
@@ -20,6 +21,8 @@ import {
   type UserSearchResult,
 } from "@/lib/rooms";
 import { ShareCodeModal } from "@/components/mail/share-code-modal";
+import { CodeComposeModal } from "@/components/mail/coded-modals";
+import type { CodeScope } from "@/lib/coded";
 
 type WindowState = "normal" | "minimized" | "fullscreen";
 
@@ -72,6 +75,13 @@ export function Compose() {
   const [shareRecipient, setShareRecipient] = useState<string>("");
   const [shareOpen, setShareOpen] = useState(false);
 
+  // Coded-message state.
+  const [codePickerOpen, setCodePickerOpen] = useState(false);
+  const [pendingCode, setPendingCode] = useState<{
+    scope: CodeScope;
+    passphrase: string;
+  } | null>(null);
+
   const knownContacts = useKnownContacts();
 
   const suggestions = useMemo(() => {
@@ -107,6 +117,7 @@ export function Compose() {
       setDirectoryHits([]);
       setShowSuggestions(false);
       setWindowState("normal");
+      setPendingCode(null);
     }
   }, [open]);
 
@@ -147,6 +158,7 @@ export function Compose() {
         subject: subject.trim() || trimmed,
         to: trimmed,
         body,
+        coded: pendingCode ?? undefined,
       });
       // Upload attachments after the room exists. We pass the recipient list
       // explicitly: the invitee won't have a "join" membership yet, so the
@@ -192,6 +204,11 @@ export function Compose() {
         onClose={() => setShareOpen(false)}
         recipient={shareRecipient}
         code={shareCode ?? ""}
+      />
+      <CodeComposeModal
+        open={codePickerOpen}
+        onClose={() => setCodePickerOpen(false)}
+        onPick={(picked) => setPendingCode(picked)}
       />
 
       {windowState === "fullscreen" && (
@@ -430,10 +447,37 @@ export function Compose() {
                 >
                   <Paperclip className="h-4 w-4" />
                 </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    pendingCode ? setPendingCode(null) : setCodePickerOpen(true)
+                  }
+                  disabled={busy}
+                  aria-pressed={!!pendingCode}
+                  aria-label={pendingCode ? "Remove code" : "Lock with a code"}
+                  className={cn(
+                    "rounded-full p-2 disabled:opacity-50",
+                    pendingCode
+                      ? "bg-selected text-selected-foreground hover:brightness-95"
+                      : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                  )}
+                  title={
+                    pendingCode
+                      ? `Locked (${pendingCode.scope}) — click to remove`
+                      : "Lock with a code"
+                  }
+                >
+                  <Lock className="h-4 w-4" />
+                </button>
+                {pendingCode && (
+                  <span className="font-mono text-[10px] text-muted-foreground">
+                    {pendingCode.scope}
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <span className="hidden text-[10px] text-muted-foreground sm:inline">
-                  encrypted · code-confirm
+                  {pendingCode ? "double-encrypted · coded" : "encrypted · code-confirm"}
                 </span>
                 <button
                   type="button"

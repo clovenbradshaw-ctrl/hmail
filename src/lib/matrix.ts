@@ -6,6 +6,12 @@ import {
   RoomStateEvent,
   MatrixEventEvent,
 } from "matrix-js-sdk";
+import {
+  clearVaultCache,
+  handleSecretStorageKeyRequest,
+  loadVault,
+} from "@/lib/coded-vault";
+import { clearDecodedCache } from "@/lib/coded-runtime";
 
 // Stage 4 wires SAS UI; we just listen so cross-signing isn't dropped silently.
 const VERIFICATION_REQUEST_EVENT = "crypto.verificationRequestReceived" as const;
@@ -154,6 +160,12 @@ function buildOpts(
   const opts: ICreateClientOpts = {
     baseUrl,
     timelineSupport: true,
+    // Wire 4S unlock prompts to the modal that the UI registers at mount.
+    // The SDK calls this when it needs to read the coded-message vault and
+    // the recovery key isn't already cached.
+    cryptoCallbacks: {
+      getSecretStorageKey: handleSecretStorageKeyRequest,
+    },
   };
   if (session) {
     opts.userId = session.user_id;
@@ -175,8 +187,15 @@ function buildOpts(
 
 function attachListeners(client: MatrixClient) {
   client.on(ClientEvent.Sync, (state) => {
-    if (state === "PREPARED") _syncState = "prepared";
-    else if (state === "SYNCING") _syncState = "syncing";
+    if (state === "PREPARED") {
+      _syncState = "prepared";
+      // Account data is available by now — try warming the coded-message
+      // vault. If 4S isn't bootstrapped this returns the empty cache; if it
+      // is, the secret-storage-key prompter will pop the unlock modal.
+      void loadVault(client).catch((err) =>
+        console.warn("[hmail] coded vault warm load failed", err),
+      );
+    } else if (state === "SYNCING") _syncState = "syncing";
     else if (state === "ERROR") _syncState = "error";
     notify();
   });
@@ -323,6 +342,10 @@ export async function logout() {
     _client = null;
   }
   clearSession();
+  // Drop in-memory coded-message state so passphrases don't survive logout.
+  // The 4S vault on the server is untouched — re-login will reload it.
+  clearVaultCache();
+  clearDecodedCache();
   _syncState = "logged_out";
   notify();
   // Wipe IndexedDB stores so a fresh login starts clean. The crypto SDK
