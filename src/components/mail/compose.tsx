@@ -22,7 +22,7 @@ import {
 } from "@/lib/rooms";
 import { ShareCodeModal } from "@/components/mail/share-code-modal";
 import { CodeComposeModal } from "@/components/mail/coded-modals";
-import { generateCode, type CodeScope } from "@/lib/coded";
+import type { CodeScope } from "@/lib/coded";
 
 type WindowState = "normal" | "minimized" | "fullscreen";
 
@@ -75,14 +75,16 @@ export function Compose() {
   const [shareRecipient, setShareRecipient] = useState<string>("");
   const [shareOpen, setShareOpen] = useState(false);
 
-  // Coded-message state. Defaults to a fresh thread-scoped code so the
-  // recipient always lands on an Unlock prompt; user can toggle off via the
-  // Lock button. Reset to a new code each time compose opens.
+  // Coded-message state. Defaults to off — Matrix E2EE alone is the floor.
+  // The Lock button opens the scope picker (always / thread / message), which
+  // is also where a fresh code is generated. Once chosen, the same toggle
+  // removes it. Reset to off each time compose opens so a re-opened draft
+  // never silently inherits a prior code.
   const [codePickerOpen, setCodePickerOpen] = useState(false);
   const [pendingCode, setPendingCode] = useState<{
     scope: CodeScope;
     passphrase: string;
-  } | null>(() => ({ scope: "thread", passphrase: generateCode() }));
+  } | null>(null);
 
   const knownContacts = useKnownContacts();
 
@@ -120,12 +122,6 @@ export function Compose() {
       setShowSuggestions(false);
       setWindowState("normal");
       setPendingCode(null);
-    } else {
-      // Re-arm the default thread code each time the window opens so a
-      // re-opened draft doesn't reuse the previous (already-shared) code.
-      setPendingCode((prev) =>
-        prev ?? { scope: "thread", passphrase: generateCode() },
-      );
     }
   }, [open]);
 
