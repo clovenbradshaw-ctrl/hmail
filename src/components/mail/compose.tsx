@@ -240,7 +240,7 @@ export function Compose() {
             ? "bottom-0 right-0 left-0 sm:left-auto sm:right-6 sm:w-[320px] rounded-t-md sm:rounded-t-md sm:rounded-b-none"
             : windowState === "fullscreen"
               ? "inset-2 sm:inset-8 rounded-lg"
-              : "inset-x-0 bottom-0 top-0 sm:inset-auto sm:bottom-0 sm:right-6 sm:top-auto sm:w-[540px] sm:max-h-[min(640px,calc(100vh-72px))] sm:rounded-t-lg",
+              : "inset-x-0 bottom-0 top-0 sm:inset-auto sm:bottom-0 sm:right-6 sm:top-auto sm:w-[540px] sm:h-[612px] sm:max-h-[calc(100vh-72px)] sm:rounded-t-lg",
         )}
       >
         {/* Header bar */}
@@ -314,7 +314,7 @@ export function Compose() {
             className="flex min-h-0 flex-1 flex-col"
           >
             {/* Recipient row */}
-            <div className="relative border-b border-border px-3 py-1.5">
+            <div className="relative border-b border-border px-4 py-2">
               <label className="flex items-center gap-2">
                 <span className="w-12 shrink-0 text-xs text-muted-foreground">
                   To
@@ -332,7 +332,7 @@ export function Compose() {
                     window.setTimeout(() => setShowSuggestions(false), 150);
                   }}
                   disabled={busy}
-                  className="w-full bg-transparent py-1 font-mono text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                  className="w-full bg-transparent py-1.5 font-mono text-sm placeholder:text-muted-foreground/60 focus:outline-none"
                 />
               </label>
               {showSuggestions && suggestions.length > 0 && (
@@ -374,7 +374,7 @@ export function Compose() {
             </div>
 
             {/* Subject row */}
-            <div className="border-b border-border px-3 py-1.5">
+            <div className="border-b border-border px-4 py-2">
               <label className="flex items-center gap-2">
                 <span className="sr-only">Subject</span>
                 <input
@@ -382,19 +382,19 @@ export function Compose() {
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                   disabled={busy}
-                  className="w-full bg-transparent py-1 text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                  className="w-full bg-transparent py-1.5 text-sm placeholder:text-muted-foreground/60 focus:outline-none"
                 />
               </label>
             </div>
 
             {/* Body */}
-            <div className="flex min-h-0 flex-1 flex-col px-3 pt-2">
+            <div className="flex min-h-0 flex-1 flex-col px-4 pt-3">
               <textarea
                 placeholder="Your message…"
                 value={body}
                 onChange={(e) => setBody(e.target.value)}
                 disabled={busy}
-                className="w-full flex-1 resize-none bg-transparent py-1 text-sm placeholder:text-muted-foreground/60 focus:outline-none"
+                className="w-full flex-1 resize-none bg-transparent py-1 text-sm leading-relaxed placeholder:text-muted-foreground/60 focus:outline-none"
               />
               {files.length > 0 && (
                 <div className="flex flex-wrap gap-1.5 pb-2">
@@ -428,7 +428,7 @@ export function Compose() {
             </div>
 
             {/* Footer */}
-            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface/40 px-3 py-2">
+            <div className="flex shrink-0 items-center justify-between gap-2 border-t border-border bg-surface/40 px-3 py-2.5">
               <div className="flex items-center gap-1">
                 <Button
                   type="submit"
