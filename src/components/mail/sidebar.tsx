@@ -13,7 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { useMailStore } from "@/hooks/use-mail";
-import { useConversations, useMyMxid } from "@/lib/rooms";
+import { useConversations, useMyMxid, userTagLabel } from "@/lib/rooms";
 import { useMyDisplayName } from "@/lib/profile";
 import { logout } from "@/lib/matrix";
 
@@ -35,6 +35,8 @@ export function Sidebar() {
   const setManageRoomsOpen = useMailStore((s) => s.setManageRoomsOpen);
   const setProfileOpen = useMailStore((s) => s.setProfileOpen);
   const setSidebarOpen = useMailStore((s) => s.setSidebarOpen);
+  const activeTag = useMailStore((s) => s.activeTag);
+  const setActiveTag = useMailStore((s) => s.setActiveTag);
 
   const inboxUnread = conversations.filter((c) => !c.archived && c.unread).length;
   const starredCount = conversations.filter((c) => c.starred).length;
@@ -56,8 +58,11 @@ export function Sidebar() {
   ];
 
   const tagSet = new Set<string>();
-  for (const c of conversations) for (const t of c.tags) tagSet.add(t);
-  const tags = Array.from(tagSet).sort();
+  for (const c of conversations)
+    for (const t of c.tags) if (t.startsWith("u.")) tagSet.add(t);
+  const tags = Array.from(tagSet).sort((a, b) =>
+    userTagLabel(a).localeCompare(userTagLabel(b), undefined, { sensitivity: "base" }),
+  );
 
   const localpart = myMxid?.match(/^@([^:]+):/)?.[1] ?? myMxid ?? "";
   const domain = myMxid?.match(/:(.+)$/)?.[1] ?? "";
@@ -156,16 +161,40 @@ export function Sidebar() {
             <div className="px-5 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Labels
             </div>
-            {tags.map((tag) => (
-              <button
-                key={tag}
-                disabled
-                className="flex w-full items-center gap-3 border-l-2 border-transparent py-1 pl-5 pr-4 text-[13px] text-muted-foreground transition hover:bg-accent"
-              >
-                <Tag className="h-3 w-3 shrink-0" />
-                <span>{tag}</span>
-              </button>
-            ))}
+            {tags.map((tag) => {
+              const active = activeTag === tag;
+              const count = conversations.filter((c) => c.tags.includes(tag)).length;
+              return (
+                <button
+                  key={tag}
+                  onClick={() => {
+                    setActiveTag(active ? null : tag);
+                    setSidebarOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between border-l-2 border-transparent py-1 pl-5 pr-4 text-[13px] transition hover:bg-accent",
+                    active
+                      ? "border-l-seal bg-accent font-bold text-seal hover:bg-accent"
+                      : "text-foreground/85",
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <Tag className="h-3 w-3 shrink-0" />
+                    <span>{userTagLabel(tag)}</span>
+                  </span>
+                  {count > 0 && (
+                    <span
+                      className={cn(
+                        "ml-1 text-[11px]",
+                        active ? "" : "text-muted-foreground",
+                      )}
+                    >
+                      ({count})
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
         </>
       )}

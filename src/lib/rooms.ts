@@ -127,6 +127,28 @@ export const ARCHIVED_TAG = "social.hyphae.archived";
 export const HMAIL_TAG = "social.hyphae.hmail";
 const FAVOURITE_TAG = "m.favourite";
 
+/**
+ * User tags follow the Matrix `u.` namespace so they don't collide with
+ * server-meaningful tags (m.favourite, m.lowpriority) or our hmail-internal
+ * tags (social.hyphae.*). The `u.` prefix is stripped for display.
+ */
+export const USER_TAG_PREFIX = "u.";
+
+export function isUserTag(tag: string): boolean {
+  return tag.startsWith(USER_TAG_PREFIX);
+}
+
+export function userTagLabel(tag: string): string {
+  return tag.startsWith(USER_TAG_PREFIX) ? tag.slice(USER_TAG_PREFIX.length) : tag;
+}
+
+export function toUserTag(label: string): string {
+  const trimmed = label.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith(USER_TAG_PREFIX)) return trimmed;
+  return USER_TAG_PREFIX + trimmed;
+}
+
 function localpart(mxid: string): string {
   const m = mxid.match(/^@([^:]+):/);
   return m ? m[1] : mxid;
@@ -529,6 +551,44 @@ export function useConversations(): Conversation[] {
   return useHmailConversations();
 }
 
+/**
+ * Aggregate every message authored by a single MXID across every joined room
+ * — the "messages from this person" long chain. Messages keep their original
+ * room context (room_id + subject) so the view can link back to each thread.
+ */
+export interface PersonMessage extends Message {
+  room_id: string;
+  room_subject: string;
+}
+
+export interface PersonMessages {
+  mxid: string;
+  display_name: string;
+  monogram: string;
+  messages: PersonMessage[];
+}
+
+export function useMessagesFromPerson(mxid: string | null): PersonMessages | null {
+  const all = useAllConversations();
+  return useMemo(() => {
+    if (!mxid) return null;
+    const out: PersonMessage[] = [];
+    let display = mxid;
+    let monogram = "?";
+    for (const c of all) {
+      for (const m of c.messages) {
+        if (m.sender.mxid !== mxid) continue;
+        if (m.redacted) continue;
+        out.push({ ...m, room_id: c.room_id, room_subject: c.subject });
+        display = m.sender.display_name || display;
+        monogram = m.sender.monogram || monogram;
+      }
+    }
+    out.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+    return { mxid, display_name: display, monogram, messages: out };
+  }, [all, mxid]);
+}
+
 export function useConversation(roomId: string | null): Conversation | null {
   // Look across ALL rooms, not just hmail-tagged ones — when the user has just
   // composed a new conversation, the HMAIL_TAG round-trip can lag the room
@@ -587,6 +647,103 @@ export async function adoptIntoHmail(roomId: string) {
   const client = getClient();
   if (!client) return;
   await client.setRoomTag(roomId, HMAIL_TAG, {});
+}
+
+/**
+ * Add a user-defined tag to a conversation. The label is normalised into the
+ * `u.` namespace so it round-trips cleanly through the Matrix tag API and
+ * doesn't get mistaken for a system tag.
+ */
+export async function addUserTag(roomId: string, label: string) {
+  const client = getClient();
+  if (!client) return;
+  const tag = toUserTag(label);
+  if (!tag) return;
+  await client.setRoomTag(roomId, tag, {});
+}
+
+export async function removeUserTag(roomId: string, tag: string) {
+  const client = getClient();
+  if (!client) return;
+  // Accept either the namespaced tag or the human label.
+  const full = tag.startsWith(USER_TAG_PREFIX) ? tag : toUserTag(tag);
+  if (!full) return;
+  await client.deleteRoomTag(roomId, full);
+}
+
+const HISTORY_VISIBILITY_EVENT = "m.room.history_visibility";
+
+/**
+ * What the invitee should see of the conversation that already exists.
+ *
+ * - `share-history`: the entire prior thread is visible to them. We set the
+ *   room's history_visibility state to `shared` *before* sending the invite
+ *   so the boundary is unambiguous.
+ * - `new-only`: anything sent before they accept the invite is hidden. We set
+ *   history_visibility to `joined` first, which means events written before
+ *   their join won't be visible. Note that on E2E rooms the megolm session
+ *   keys for past messages are also not shared with new joiners by default,
+ *   so the cryptographic boundary backs up the policy boundary.
+ *
+ * The user is *required* to choose — there is no implicit default. This
+ * matters because once a member is invited under one policy, retroactively
+ * changing it doesn't unsend keys that were already given out.
+ */
+export type HistoryAccess = "share-history" | "new-only";
+
+export async function setRoomHistoryAccess(
+  roomId: string,
+  access: HistoryAccess,
+) {
+  const client = getClient();
+  if (!client) return;
+  const visibility = access === "share-history" ? "shared" : "joined";
+  type SendStateFn = (
+    roomId: string,
+    type: string,
+    content: unknown,
+    stateKey: string,
+  ) => Promise<unknown>;
+  await (client.sendStateEvent as unknown as SendStateFn)(
+    roomId,
+    HISTORY_VISIBILITY_EVENT,
+    { history_visibility: visibility },
+    "",
+  );
+}
+
+/**
+ * Invite a user to an existing room with an explicit decision about whether
+ * they get to see the past thread or not. Always sets the history_visibility
+ * state event *before* the invite, so the new member's first sync sees the
+ * intended policy.
+ */
+export async function inviteToRoom(
+  roomId: string,
+  mxid: string,
+  access: HistoryAccess,
+) {
+  const client = getClient();
+  if (!client) throw new Error("Not signed in.");
+  const target = mxid.trim();
+  if (!target) throw new Error("Recipient is empty.");
+  await setRoomHistoryAccess(roomId, access);
+  await client.invite(roomId, target);
+}
+
+/**
+ * Read back the current `m.room.history_visibility` for a room. Returns null
+ * when the state event isn't set (treat as Matrix default — `shared`).
+ */
+export function getRoomHistoryVisibility(roomId: string): string | null {
+  const client = getClient();
+  if (!client) return null;
+  const room = client.getRoom(roomId);
+  if (!room) return null;
+  const ev = room.currentState.getStateEvents(HISTORY_VISIBILITY_EVENT, "");
+  if (!ev) return null;
+  const c = ev.getContent() as { history_visibility?: string } | undefined;
+  return c?.history_visibility ?? null;
 }
 
 export async function releaseFromHmail(roomId: string) {

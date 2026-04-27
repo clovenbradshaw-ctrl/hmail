@@ -7,18 +7,22 @@ import { Compose } from "@/components/mail/compose";
 import { ManageRooms } from "@/components/mail/manage-rooms";
 import { Profile } from "@/components/mail/profile";
 import { KeyboardHelp } from "@/components/mail/keyboard-help";
+import { PersonView } from "@/components/mail/person-view";
 import { useMailStore } from "@/hooks/use-mail";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { cn } from "@/lib/utils";
 
 export function Mail() {
   const selectedRoomId = useMailStore((s) => s.selectedRoomId);
+  const personViewMxid = useMailStore((s) => s.personViewMxid);
   const folder = useMailStore((s) => s.folder);
   const sidebarOpen = useMailStore((s) => s.sidebarOpen);
   const setSidebarOpen = useMailStore((s) => s.setSidebarOpen);
   useKeyboardShortcuts();
 
-  const main = selectedRoomId ? (
+  const main = personViewMxid ? (
+    <PersonView />
+  ) : selectedRoomId ? (
     <MailDisplay />
   ) : folder === "media" ? (
     <MediaStore />
