@@ -565,8 +565,14 @@ function ReplyCard({ roomId }: { roomId: string }) {
     scope: "always" | "thread" | "message";
     passphrase: string;
   } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  // Tracks the roomId we've already hydrated `pendingCode` from cache for in
+  // the current open session. Reset when the card closes so reopening picks
+  // up any new cached code, but preserved across renders so the user can
+  // explicitly clear the lock without it snapping back on.
+  const hydratedFor = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -579,18 +585,31 @@ function ReplyCard({ roomId }: { roomId: string }) {
   // If this thread already has a cached code (because the user unlocked an
   // earlier message or sent the first one with a code), default the reply to
   // use it so the encrypted thread stays encrypted without an extra click.
+  // Only seed once per open session — otherwise clearing the lock would just
+  // re-apply the cached code on the next render.
   useEffect(() => {
-    if (!open) return;
-    if (pendingCode) return;
+    if (!open) {
+      hydratedFor.current = null;
+      return;
+    }
+    if (hydratedFor.current === roomId) return;
+    hydratedFor.current = roomId;
     const cached = getCachedThreadCode(roomId);
     if (cached) setPendingCode({ scope: "thread", passphrase: cached });
-  }, [open, roomId, pendingCode]);
+  }, [open, roomId]);
+
+  // Clear any prior send error once the user reacts (edits text, changes
+  // attachments, or toggles the lock).
+  useEffect(() => {
+    setError(null);
+  }, [body, files, pendingCode]);
 
   async function send() {
     if (busy) return;
     const text = body.trim();
     if (!text && files.length === 0) return;
     setBusy(true);
+    setError(null);
     try {
       if (text) {
         if (pendingCode) {
@@ -611,6 +630,13 @@ function ReplyCard({ roomId }: { roomId: string }) {
       setFiles([]);
       setPendingCode(null);
       setOpen(false);
+    } catch (err) {
+      console.warn("[hmail] reply send failed", err);
+      setError(
+        pendingCode
+          ? "Couldn't send the locked message. Click the lock to remove it, then try again."
+          : "Couldn't send. Try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -711,6 +737,14 @@ function ReplyCard({ roomId }: { roomId: string }) {
                 </button>
               </span>
             ))}
+          </div>
+        )}
+        {error && (
+          <div
+            role="alert"
+            className="border-t border-border px-4 py-2 text-xs text-destructive"
+          >
+            {error}
           </div>
         )}
         <div className="flex items-center justify-between gap-2 border-t border-border px-2 py-2">
