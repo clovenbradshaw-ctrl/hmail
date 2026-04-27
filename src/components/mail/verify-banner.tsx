@@ -145,7 +145,7 @@ function AwaitingMeBanner({
           value={code}
           onChange={(e) => setCode(e.target.value.toUpperCase())}
           placeholder="K7M2X4"
-          maxLength={12}
+          maxLength={6}
           className="w-40 font-mono uppercase tracking-[0.3em]"
           disabled={busy}
         />
