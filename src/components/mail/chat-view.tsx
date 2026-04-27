@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { format, isSameDay } from "date-fns";
 import { Lock, Paperclip } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { MemberAvatar } from "@/components/ui/member-avatar";
 import type { Message } from "@/lib/rooms";
 
 /**
@@ -92,11 +92,12 @@ export function ChatView({
                     aria-label={`See all messages from ${first.sender.display_name}`}
                     className="shrink-0"
                   >
-                    <Avatar className="h-7 w-7">
-                      <AvatarFallback className="bg-muted font-mono text-[10px]">
-                        {first.sender.monogram}
-                      </AvatarFallback>
-                    </Avatar>
+                    <MemberAvatar
+                      className="h-7 w-7"
+                      mxc={first.sender.avatar_mxc}
+                      monogram={first.sender.monogram}
+                      alt={first.sender.display_name}
+                    />
                   </button>
                 )}
                 <div

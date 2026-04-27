@@ -12,6 +12,7 @@ import {
   loadVault,
 } from "@/lib/coded-vault";
 import { clearDecodedCache } from "@/lib/coded-runtime";
+import { publishMyAvatarToRoom } from "@/lib/profile";
 
 // Stage 4 wires SAS UI; we just listen so cross-signing isn't dropped silently.
 const VERIFICATION_REQUEST_EVENT = "crypto.verificationRequestReceived" as const;
@@ -123,6 +124,9 @@ async function autoAcceptInvite(client: MatrixClient, roomId: string) {
       // still adopt the room from Manage Rooms if this lags.
       console.warn("[hmail] failed to tag accepted invite", roomId, err);
     }
+    // Now that we've consented to this connection, push our avatar (if any)
+    // into the room so the inviter sees it. Best-effort.
+    void publishMyAvatarToRoom(roomId);
   } catch (err) {
     console.warn("[hmail] auto-accept invite failed", roomId, err);
   } finally {

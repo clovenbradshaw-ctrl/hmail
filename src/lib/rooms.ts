@@ -10,6 +10,7 @@ import {
   RoomMemberEvent,
 } from "matrix-js-sdk";
 import { getClient, subscribe } from "@/lib/matrix";
+import { publishMyAvatarToRoom } from "@/lib/profile";
 import {
   CODED_BODY_FALLBACK,
   CODED_CONTENT_KEY,
@@ -29,6 +30,11 @@ export interface Sender {
   mxid: string;
   display_name: string;
   monogram: string;
+  /**
+   * Per-room avatar mxc URI from this user's m.room.member state event.
+   * Only present when we share the relevant room — i.e. when we've connected.
+   */
+  avatar_mxc?: string;
 }
 
 export interface Reaction {
@@ -188,10 +194,19 @@ function senderFor(_client: MatrixClient, room: Room, mxid: string): Sender {
   const member = room.getMember(mxid);
   const profileName = member?.name || member?.rawDisplayName || undefined;
   const display = profileName?.trim() || localpart(mxid);
+  // The member's avatar is whatever they set on their own m.room.member
+  // event in this room. Only readable to room members, which is the gate.
+  const memberContent = member?.events?.member?.getContent() as
+    | { avatar_url?: unknown }
+    | undefined;
+  const rawMxc = memberContent?.avatar_url;
+  const avatar_mxc =
+    typeof rawMxc === "string" && rawMxc.startsWith("mxc://") ? rawMxc : undefined;
   return {
     mxid,
     display_name: display,
     monogram: monogramFor(display),
+    avatar_mxc,
   };
 }
 
@@ -510,7 +525,7 @@ function snapshotFingerprint(convs: Conversation[]): string {
   return convs
     .map(
       (c) =>
-        `${c.room_id}:${c.last_activity_ts}:${c.unread ? 1 : 0}:${c.starred ? 1 : 0}:${c.archived ? 1 : 0}:${c.in_hmail ? 1 : 0}:${c.messages.length}:${c.messages.map((m) => `${m.event_id}!${m.status}!${m.edited ? "e" : ""}!${m.reactions.length}!${m.coded ? (m.coded.locked ? "L" : "U") : ""}`).join(",")}`,
+        `${c.room_id}:${c.last_activity_ts}:${c.unread ? 1 : 0}:${c.starred ? 1 : 0}:${c.archived ? 1 : 0}:${c.in_hmail ? 1 : 0}:${c.messages.length}:${c.participants.map((p) => `${p.mxid}#${p.display_name}#${p.avatar_mxc ?? ""}`).join("+")}:${c.messages.map((m) => `${m.event_id}!${m.status}!${m.edited ? "e" : ""}!${m.reactions.length}!${m.coded ? (m.coded.locked ? "L" : "U") : ""}!${m.sender.avatar_mxc ?? ""}`).join(",")}`,
     )
     .join("|");
 }
@@ -565,6 +580,8 @@ export interface PersonMessages {
   mxid: string;
   display_name: string;
   monogram: string;
+  /** Latest avatar mxc seen across our shared rooms with this person. */
+  avatar_mxc?: string;
   messages: PersonMessage[];
 }
 
@@ -575,6 +592,7 @@ export function useMessagesFromPerson(mxid: string | null): PersonMessages | nul
     const out: PersonMessage[] = [];
     let display = mxid;
     let monogram = "?";
+    let avatar_mxc: string | undefined;
     for (const c of all) {
       for (const m of c.messages) {
         if (m.sender.mxid !== mxid) continue;
@@ -582,10 +600,11 @@ export function useMessagesFromPerson(mxid: string | null): PersonMessages | nul
         out.push({ ...m, room_id: c.room_id, room_subject: c.subject });
         display = m.sender.display_name || display;
         monogram = m.sender.monogram || monogram;
+        if (m.sender.avatar_mxc) avatar_mxc = m.sender.avatar_mxc;
       }
     }
     out.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
-    return { mxid, display_name: display, monogram, messages: out };
+    return { mxid, display_name: display, monogram, avatar_mxc, messages: out };
   }, [all, mxid]);
 }
 
@@ -899,6 +918,10 @@ export async function composeNewConversation(opts: {
   } catch {
     /* non-fatal */
   }
+  // If we have an avatar set, push it into this room's m.room.member so the
+  // person we just invited sees it as soon as they accept the invite.
+  // Best-effort — failure here only delays avatar appearance, never a send.
+  void publishMyAvatarToRoom(roomId);
   if (opts.body.trim()) {
     // Build the content (coded or plain) up-front so we can fire-and-forget
     // the actual send. In an encrypted room, sendMessage waits for the megolm
