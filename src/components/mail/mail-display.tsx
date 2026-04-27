@@ -69,6 +69,7 @@ import { getCachedThreadCode } from "@/lib/coded-vault";
 import { ConversationTagPicker } from "@/components/mail/tag-picker";
 import { ChatView } from "@/components/mail/chat-view";
 import { AddPeopleModal } from "@/components/mail/add-people";
+import { Modal } from "@/components/ui/modal";
 import { UserPlus } from "lucide-react";
 
 const REACTION_PALETTE = ["👍", "❤️", "😂", "🎉", "🤔", "🙏"];
@@ -98,27 +99,63 @@ function AttachmentBlock({ attachment }: { attachment: Attachment }) {
   // access token and render the resulting blob URL instead.
   const blobUrl = useAttachmentUrl(attachment.mxc);
   const hasMedia = !!attachment.mxc;
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   if (attachment.kind === "image" && hasMedia) {
     return (
-      <a
-        href={blobUrl ?? "#"}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-2 inline-block max-w-md overflow-hidden rounded-lg border border-border"
-      >
-        {blobUrl ? (
-          <img
-            src={blobUrl}
-            alt={attachment.name}
-            className="block max-h-80 w-auto"
-            loading="lazy"
-          />
-        ) : (
-          <div className="flex h-40 w-72 items-center justify-center bg-muted text-xs text-muted-foreground">
-            Loading image…
+      <>
+        <button
+          type="button"
+          onClick={() => blobUrl && setLightboxOpen(true)}
+          disabled={!blobUrl}
+          className="mt-2 inline-block max-w-md overflow-hidden rounded-lg border border-border bg-transparent p-0 disabled:cursor-default"
+        >
+          {blobUrl ? (
+            <img
+              src={blobUrl}
+              alt={attachment.name}
+              className="block max-h-80 w-auto cursor-zoom-in"
+              loading="lazy"
+            />
+          ) : (
+            <div className="flex h-40 w-72 items-center justify-center bg-muted text-xs text-muted-foreground">
+              Loading image…
+            </div>
+          )}
+        </button>
+        <Modal
+          open={lightboxOpen}
+          onClose={() => setLightboxOpen(false)}
+          title={
+            <span className="truncate text-sm font-semibold">
+              {attachment.name}
+            </span>
+          }
+          className="sm:max-w-4xl"
+        >
+          <div className="flex flex-col gap-3 p-4">
+            {blobUrl && (
+              <img
+                src={blobUrl}
+                alt={attachment.name}
+                className="block max-h-[75vh] w-full rounded-md object-contain"
+              />
+            )}
+            <div className="flex justify-end">
+              <a
+                href={blobUrl ?? "#"}
+                download={attachment.name}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <Download className="h-3.5 w-3.5" />
+                  Download
+                </Button>
+              </a>
+            </div>
           </div>
-        )}
-      </a>
+        </Modal>
+      </>
     );
   }
   return (
