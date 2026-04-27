@@ -442,7 +442,23 @@ function MessageCard({
   );
 }
 
+function formatReplyBytes(b: number): string {
+  if (!Number.isFinite(b) || b < 0) return "";
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function ReplyCard({ roomId }: { roomId: string }) {
+  const conversation = useConversation(roomId);
+  const myMxid = useMyMxid();
+  const recipientLabel = useMemo(() => {
+    const others =
+      conversation?.participants.filter((p) => p.mxid !== myMxid) ?? [];
+    if (others.length === 0) return "";
+    return others.map((p) => p.display_name || p.mxid).join(", ");
+  }, [conversation?.participants, myMxid]);
+
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
@@ -540,7 +556,29 @@ function ReplyCard({ roomId }: { roomId: string }) {
         onClose={() => setCodePickerOpen(false)}
         onPick={(picked) => setPendingCode(picked)}
       />
-      <div className="rounded-2xl border border-border bg-surface shadow-sm">
+      <div
+        className="rounded-2xl border border-border bg-surface shadow-sm"
+        onDragOver={(e) => {
+          if (busy) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={(e) => {
+          if (busy) return;
+          const dropped = Array.from(e.dataTransfer.files ?? []);
+          if (dropped.length === 0) return;
+          e.preventDefault();
+          setFiles((prev) => [...prev, ...dropped]);
+        }}
+      >
+        {recipientLabel && (
+          <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-sm">
+            <span className="w-8 shrink-0 text-xs text-muted-foreground">
+              To
+            </span>
+            <span className="truncate">{recipientLabel}</span>
+          </div>
+        )}
         <textarea
           ref={ref}
           value={body}
@@ -561,6 +599,11 @@ function ReplyCard({ roomId }: { roomId: string }) {
               >
                 <Paperclip className="h-3 w-3 text-muted-foreground" />
                 <span className="max-w-[14ch] truncate">{f.name}</span>
+                {f.size > 0 && (
+                  <span className="text-muted-foreground">
+                    {formatReplyBytes(f.size)}
+                  </span>
+                )}
                 <button
                   type="button"
                   className="text-muted-foreground hover:text-foreground"
@@ -645,10 +688,9 @@ function ReplyCard({ roomId }: { roomId: string }) {
               Cancel
             </Button>
             <Button
-              size="sm"
               onClick={() => void send()}
               disabled={busy || (!body.trim() && files.length === 0)}
-              className="gap-1.5 rounded-full"
+              className="inline-flex items-center gap-1.5 rounded-full bg-seal px-5 py-2 text-sm font-medium text-seal-foreground shadow-sm hover:bg-seal hover:brightness-95 disabled:opacity-60"
             >
               <Send className="h-3.5 w-3.5" />
               {busy ? "Sending…" : "Send"}
