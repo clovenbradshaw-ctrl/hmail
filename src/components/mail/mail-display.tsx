@@ -57,6 +57,7 @@ import {
   type Attachment,
 } from "@/lib/rooms";
 import { getClient } from "@/lib/matrix";
+import { useAttachmentUrl } from "@/lib/media";
 import { VerifyBanner } from "@/components/mail/verify-banner";
 import {
   CodeComposeModal,
@@ -85,30 +86,49 @@ function StatusPill({ status }: { status: Message["status"] }) {
 }
 
 function AttachmentBlock({ attachment }: { attachment: Attachment }) {
-  if (attachment.kind === "image" && attachment.url) {
+  // The unauth'd `attachment.url` (mxcUrlToHttp output) points at the v1
+  // authenticated-media endpoint, which 401s without an Authorization header
+  // — useless from `<img src>` / `<a href>`. Fetch the bytes via the SDK's
+  // access token and render the resulting blob URL instead.
+  const blobUrl = useAttachmentUrl(attachment.mxc);
+  const hasMedia = !!attachment.mxc;
+  if (attachment.kind === "image" && hasMedia) {
     return (
       <a
-        href={attachment.url}
+        href={blobUrl ?? "#"}
         target="_blank"
         rel="noopener noreferrer"
         className="mt-2 inline-block max-w-md overflow-hidden rounded-lg border border-border"
       >
-        <img
-          src={attachment.url}
-          alt={attachment.name}
-          className="block max-h-80 w-auto"
-          loading="lazy"
-        />
+        {blobUrl ? (
+          <img
+            src={blobUrl}
+            alt={attachment.name}
+            className="block max-h-80 w-auto"
+            loading="lazy"
+          />
+        ) : (
+          <div className="flex h-40 w-72 items-center justify-center bg-muted text-xs text-muted-foreground">
+            Loading image…
+          </div>
+        )}
       </a>
     );
   }
   return (
     <a
-      href={attachment.url ?? "#"}
+      href={blobUrl ?? "#"}
       target="_blank"
       rel="noopener noreferrer"
       download={attachment.name}
-      className="mt-2 inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-accent"
+      aria-disabled={!blobUrl}
+      onClick={(e) => {
+        if (!blobUrl) e.preventDefault();
+      }}
+      className={cn(
+        "mt-2 inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-accent",
+        !blobUrl && "pointer-events-none opacity-60",
+      )}
     >
       <FileIcon className="h-4 w-4 text-muted-foreground" />
       <span className="font-medium">{attachment.name}</span>

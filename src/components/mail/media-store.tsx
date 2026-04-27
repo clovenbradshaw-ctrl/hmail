@@ -20,6 +20,7 @@ import { useMailStore } from "@/hooks/use-mail";
 import {
   effectiveGrantedMxids,
   filterMediaItems,
+  useAttachmentUrl,
   useMediaItems,
   type MediaFilter,
   type MediaItem,
@@ -47,7 +48,8 @@ function MediaTile({
 }) {
   const grant = effectiveGrantedMxids(item);
   const sizeLabel = formatBytes(item.attachment.size);
-  const isImage = item.attachment.kind === "image" && !!item.attachment.url;
+  const isImage = item.attachment.kind === "image" && !!item.attachment.mxc;
+  const blobUrl = useAttachmentUrl(isImage ? item.attachment.mxc : undefined);
 
   return (
     <button
@@ -56,9 +58,9 @@ function MediaTile({
       className="group flex flex-col overflow-hidden rounded-lg border border-border bg-surface text-left shadow-sm transition hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring"
     >
       <div className="relative aspect-[4/3] w-full overflow-hidden bg-muted">
-        {isImage ? (
+        {isImage && blobUrl ? (
           <img
-            src={item.attachment.url ?? undefined}
+            src={blobUrl}
             alt={item.attachment.name}
             loading="lazy"
             className="h-full w-full object-cover transition group-hover:scale-[1.02]"
@@ -169,7 +171,8 @@ function MediaDetails({
   const granted = effectiveGrantedMxids(item);
   const owner = item.attachment.access?.owner ?? item.sender.mxid;
   const grantedTs = item.attachment.access?.granted_ts ?? item.ts;
-  const isImage = item.attachment.kind === "image" && !!item.attachment.url;
+  const isImage = item.attachment.kind === "image" && !!item.attachment.mxc;
+  const blobUrl = useAttachmentUrl(item.attachment.mxc);
   const sizeLabel = formatBytes(item.attachment.size);
 
   function openConversation() {
@@ -198,16 +201,26 @@ function MediaDetails({
       <div className="flex flex-col gap-4 p-5">
         {isImage ? (
           <a
-            href={item.attachment.url ?? "#"}
+            href={blobUrl ?? "#"}
             target="_blank"
             rel="noopener noreferrer"
+            aria-disabled={!blobUrl}
+            onClick={(e) => {
+              if (!blobUrl) e.preventDefault();
+            }}
             className="block overflow-hidden rounded-md border border-border bg-muted"
           >
-            <img
-              src={item.attachment.url ?? undefined}
-              alt={item.attachment.name}
-              className="block max-h-[60vh] w-full object-contain"
-            />
+            {blobUrl ? (
+              <img
+                src={blobUrl}
+                alt={item.attachment.name}
+                className="block max-h-[60vh] w-full object-contain"
+              />
+            ) : (
+              <div className="flex h-48 w-full items-center justify-center text-xs text-muted-foreground">
+                Loading image…
+              </div>
+            )}
           </a>
         ) : (
           <div className="flex items-center gap-3 rounded-md border border-border bg-surface px-4 py-4">
@@ -225,15 +238,25 @@ function MediaDetails({
         )}
 
         <div className="flex flex-wrap gap-2">
-          {item.attachment.url && (
+          {item.attachment.mxc && (
             <a
-              href={item.attachment.url}
+              href={blobUrl ?? "#"}
               target="_blank"
               rel="noopener noreferrer"
               download={item.attachment.name}
+              aria-disabled={!blobUrl}
+              onClick={(e) => {
+                if (!blobUrl) e.preventDefault();
+              }}
             >
-              <Button variant="outline" size="sm" className="gap-1.5">
-                <Download className="h-3.5 w-3.5" /> Download
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                disabled={!blobUrl}
+              >
+                <Download className="h-3.5 w-3.5" />
+                {blobUrl ? "Download" : "Loading…"}
               </Button>
             </a>
           )}

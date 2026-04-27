@@ -5,6 +5,8 @@ import {
   Minimize2,
   Minus,
   Paperclip,
+  ShieldCheck,
+  ShieldOff,
   Trash2,
   X,
 } from "lucide-react";
@@ -85,6 +87,11 @@ export function Compose() {
     scope: CodeScope;
     passphrase: string;
   } | null>(null);
+  // Code-confirm: out-of-band identity check. Defaults on. Toggle in the
+  // footer lets the sender opt out for casual messages. When on, the same
+  // code is reused as the coded-layer passphrase if one is set, so the
+  // recipient only ever has to enter one code to both unlock and confirm.
+  const [confirmEnabled, setConfirmEnabled] = useState(true);
 
   const knownContacts = useKnownContacts();
 
@@ -122,6 +129,7 @@ export function Compose() {
       setShowSuggestions(false);
       setWindowState("normal");
       setPendingCode(null);
+      setConfirmEnabled(true);
     }
   }, [open]);
 
@@ -170,22 +178,32 @@ export function Compose() {
       for (const f of files) {
         await sendAttachment(roomId, f, [trimmed]);
       }
-      // Identity-verification "confirmation request" fires in the background,
-      // but the code surfaced to the sender in the share modal is the
-      // encryption passphrase — that's what the recipient must enter to
-      // unlock the message body. Fire-and-forget: sendEvent encrypts in
-      // encrypted rooms and can hang when the invitee's homeserver isn't
-      // reachable; the verify banner offers a retry once the conversation is
-      // open.
-      void sendConfirmationRequest(roomId, generateConfirmationCode(6)).catch(
-        () => {
+      // Two distinct codes can be in play: a coded-layer passphrase the
+      // recipient needs to decrypt the body, and a code-confirm code the
+      // recipient enters to prove side-channel identity. When both are
+      // enabled we reuse the passphrase as the confirmation code so the
+      // recipient only enters one thing.
+      const passphrase = pendingCode?.passphrase ?? null;
+      const confirmCode = confirmEnabled
+        ? (passphrase ?? generateConfirmationCode(6))
+        : null;
+      if (confirmCode) {
+        // Fire-and-forget the post: sendEvent in an encrypted room can
+        // hang waiting for the invitee's keys, but the recipient won't see
+        // the request until they join anyway, and the verify banner offers
+        // a retry. Showing the share modal immediately gets the code in
+        // front of the sender — that's the actual blocker.
+        void sendConfirmationRequest(roomId, confirmCode).catch(() => {
           /* non-fatal — banner offers retry */
-        },
-      );
+        });
+      }
+      // Prefer the passphrase if set (recipient can't read the message
+      // without it); otherwise share the confirm code.
+      const shareCodeValue = passphrase ?? confirmCode;
       setSelectedRoomId(roomId);
-      setShareCode(pendingCode ? pendingCode.passphrase : null);
+      setShareCode(shareCodeValue);
       setShareRecipient(trimmed);
-      setShareOpen(!!pendingCode);
+      setShareOpen(!!shareCodeValue);
       setOpen(false);
     } catch (err) {
       setError(describeComposeError(err, to.trim()));
@@ -486,9 +504,36 @@ export function Compose() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <span className="hidden text-[10px] text-muted-foreground sm:inline">
-                  {pendingCode ? "double-encrypted · coded" : "encrypted · code-confirm"}
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setConfirmEnabled((c) => !c)}
+                  disabled={busy}
+                  aria-pressed={confirmEnabled}
+                  title={
+                    confirmEnabled
+                      ? "Code-confirm on — recipient verifies via side-channel code. Click to turn off."
+                      : "Code-confirm off — Matrix E2EE only. Click to turn on."
+                  }
+                  className={cn(
+                    "hidden items-center gap-1 rounded-full px-2 py-1 text-[10px] sm:inline-flex",
+                    confirmEnabled
+                      ? "text-muted-foreground hover:bg-accent hover:text-foreground"
+                      : "text-muted-foreground/60 hover:bg-accent hover:text-foreground",
+                  )}
+                >
+                  {confirmEnabled ? (
+                    <ShieldCheck className="h-3 w-3" />
+                  ) : (
+                    <ShieldOff className="h-3 w-3" />
+                  )}
+                  {pendingCode
+                    ? confirmEnabled
+                      ? "coded · code-confirm"
+                      : "coded only"
+                    : confirmEnabled
+                      ? "encrypted · code-confirm"
+                      : "encrypted only"}
+                </button>
                 <button
                   type="button"
                   onClick={discard}
