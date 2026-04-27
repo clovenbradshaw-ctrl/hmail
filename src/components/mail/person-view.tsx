@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { format } from "date-fns";
 import { ArrowLeft, Inbox } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { MemberAvatar } from "@/components/ui/member-avatar";
 import { useMailStore } from "@/hooks/use-mail";
 import { useMessagesFromPerson, type PersonMessage } from "@/lib/rooms";
 
@@ -51,11 +51,13 @@ export function PersonView() {
         >
           <ArrowLeft className="h-5 w-5" />
         </button>
-        <Avatar className="h-9 w-9 shrink-0">
-          <AvatarFallback className="bg-muted font-mono text-[11px]">
-            {data.monogram}
-          </AvatarFallback>
-        </Avatar>
+        <MemberAvatar
+          className="h-9 w-9 shrink-0"
+          mxc={data.avatar_mxc}
+          monogram={data.monogram}
+          alt={data.display_name}
+          fallbackClassName="bg-muted font-mono text-[11px]"
+        />
         <div className="flex min-w-0 flex-col">
           <h1 className="truncate text-lg font-semibold leading-tight tracking-tight sm:text-xl">
             All messages from {data.display_name}

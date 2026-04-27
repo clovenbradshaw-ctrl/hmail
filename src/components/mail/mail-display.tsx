@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { MemberAvatar } from "@/components/ui/member-avatar";
 import {
   Tooltip,
   TooltipContent,
@@ -278,11 +278,12 @@ function MessageCard({
           aria-label={`See all messages from ${message.sender.display_name}`}
           className="shrink-0 rounded-full"
         >
-          <Avatar className="h-7 w-7">
-            <AvatarFallback className="bg-muted font-mono text-[10px]">
-              {message.sender.monogram}
-            </AvatarFallback>
-          </Avatar>
+          <MemberAvatar
+            className="h-7 w-7"
+            mxc={message.sender.avatar_mxc}
+            monogram={message.sender.monogram}
+            alt={message.sender.display_name}
+          />
         </button>
         <span className="min-w-0 flex-1 truncate text-sm">
           <button
@@ -314,17 +315,17 @@ function MessageCard({
             aria-label={`See all messages from ${message.sender.display_name}`}
             className="shrink-0 rounded-full"
           >
-            <Avatar className="h-9 w-9">
-              <AvatarFallback
-                className={
-                  isYou
-                    ? "bg-primary text-primary-foreground font-mono text-[11px]"
-                    : "bg-muted text-foreground font-mono text-[11px]"
-                }
-              >
-                {message.sender.monogram}
-              </AvatarFallback>
-            </Avatar>
+            <MemberAvatar
+              className="h-9 w-9"
+              mxc={message.sender.avatar_mxc}
+              monogram={message.sender.monogram}
+              alt={message.sender.display_name}
+              fallbackClassName={
+                isYou
+                  ? "bg-primary text-primary-foreground font-mono text-[11px]"
+                  : "bg-muted text-foreground font-mono text-[11px]"
+              }
+            />
           </button>
           <div className="flex min-w-0 flex-col">
             <div className="flex items-baseline gap-2 min-w-0">

@@ -14,8 +14,9 @@ import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { useMailStore } from "@/hooks/use-mail";
 import { useConversations, useMyMxid, userTagLabel } from "@/lib/rooms";
-import { useMyDisplayName } from "@/lib/profile";
+import { useMyAvatarMxc, useMyDisplayName } from "@/lib/profile";
 import { logout } from "@/lib/matrix";
+import { MemberAvatar } from "@/components/ui/member-avatar";
 
 interface NavItem {
   label: string;
@@ -29,6 +30,7 @@ export function Sidebar() {
   const conversations = useConversations();
   const myMxid = useMyMxid();
   const myDisplayName = useMyDisplayName();
+  const myAvatarMxc = useMyAvatarMxc();
   const folder = useMailStore((s) => s.folder);
   const setFolder = useMailStore((s) => s.setFolder);
   const setComposeOpen = useMailStore((s) => s.setComposeOpen);
@@ -66,6 +68,12 @@ export function Sidebar() {
 
   const localpart = myMxid?.match(/^@([^:]+):/)?.[1] ?? myMxid ?? "";
   const domain = myMxid?.match(/:(.+)$/)?.[1] ?? "";
+  const monogramSource = (myDisplayName || localpart || "?").trim();
+  const monogramParts = monogramSource.split(/\s+/);
+  const myMonogram =
+    monogramParts.length === 1
+      ? monogramSource.slice(0, 2).toUpperCase()
+      : (monogramParts[0][0] + monogramParts[monogramParts.length - 1][0]).toUpperCase();
 
   return (
     <div className="flex h-full flex-col bg-surface">
@@ -79,9 +87,19 @@ export function Sidebar() {
         className="flex items-center gap-2 px-5 py-4 text-left transition hover:bg-accent"
         aria-label="Edit your profile"
       >
-        <div className="flex h-7 w-7 items-center justify-center rounded bg-seal text-seal-foreground">
-          <span className="font-display text-sm font-bold italic">h</span>
-        </div>
+        {myAvatarMxc ? (
+          <MemberAvatar
+            className="h-7 w-7 rounded"
+            mxc={myAvatarMxc}
+            monogram={myMonogram}
+            alt="Your profile picture"
+            fallbackClassName="bg-seal text-seal-foreground rounded font-display text-sm font-bold italic"
+          />
+        ) : (
+          <div className="flex h-7 w-7 items-center justify-center rounded bg-seal text-seal-foreground">
+            <span className="font-display text-sm font-bold italic">h</span>
+          </div>
+        )}
         <div className="flex min-w-0 flex-col leading-tight">
           <span className="truncate text-sm font-semibold tracking-tight">
             {myDisplayName || "Set your name"}
