@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   Smile,
   ArchiveRestore,
+  Layers,
   Pencil,
   Eraser,
   Clock,
@@ -43,6 +44,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useMailStore } from "@/hooks/use-mail";
 import {
+  clearMergedInto,
   editMessage,
   markRoomRead,
   retractMessage,
@@ -52,6 +54,7 @@ import {
   setArchived,
   setStarred,
   toggleReaction,
+  useAllConversations,
   useConfirmState,
   useConversation,
   useMyMxid,
@@ -805,6 +808,12 @@ export function MailDisplay() {
   const conversation = useConversation(selectedRoomId);
   const confirmState = useConfirmState(selectedRoomId);
   const myMxid = useMyMxid();
+  const allConvs = useAllConversations();
+  const mergedSources = useMemo(() => {
+    if (!conversation || conversation.merged_from.length === 0) return [];
+    const ids = new Set(conversation.merged_from);
+    return allConvs.filter((c) => ids.has(c.room_id));
+  }, [conversation, allConvs]);
   const [collapsedSet, setCollapsedSet] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<DisplayMode>("email");
   const [addPeopleOpen, setAddPeopleOpen] = useState(false);
@@ -901,6 +910,20 @@ export function MailDisplay() {
               <span className="font-mono">
                 {ordered.length} {ordered.length === 1 ? "message" : "messages"}
               </span>
+              {mergedSources.length > 0 && (
+                <>
+                  <span>·</span>
+                  <span
+                    title={mergedSources
+                      .map((s) => s.subject || s.room_id)
+                      .join("\n")}
+                    className="inline-flex items-center gap-1 rounded-sm border border-border/70 bg-surface px-1 font-mono text-[10px]"
+                  >
+                    <Layers className="h-3 w-3" />
+                    {mergedSources.length} merged
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -992,6 +1015,25 @@ export function MailDisplay() {
               <DropdownMenuItem disabled>
                 <Forward className="mr-2 h-3.5 w-3.5" /> Forward · soon
               </DropdownMenuItem>
+              {mergedSources.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Merged threads
+                  </div>
+                  {mergedSources.map((s) => (
+                    <DropdownMenuItem
+                      key={s.room_id}
+                      onSelect={() => void clearMergedInto(s.room_id)}
+                    >
+                      <Layers className="mr-2 h-3.5 w-3.5" />
+                      <span className="flex-1 truncate">
+                        Unmerge "{s.subject || s.room_id}"
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled>Mute conversation</DropdownMenuItem>
               <DropdownMenuItem disabled className="text-destructive focus:text-destructive">
