@@ -20,6 +20,8 @@ import {
   FileIcon,
   Download,
   Lock,
+  Mail as MailIcon,
+  MessageSquare,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -64,6 +66,10 @@ import {
   CodeUnlockModal,
 } from "@/components/mail/coded-modals";
 import { getCachedThreadCode } from "@/lib/coded-vault";
+import { ConversationTagPicker } from "@/components/mail/tag-picker";
+import { ChatView } from "@/components/mail/chat-view";
+import { AddPeopleModal } from "@/components/mail/add-people";
+import { UserPlus } from "lucide-react";
 
 const REACTION_PALETTE = ["👍", "❤️", "😂", "🎉", "🤔", "🙏"];
 
@@ -226,12 +232,14 @@ function MessageCard({
   isYou,
   collapsed,
   onToggleCollapsed,
+  onOpenPerson,
 }: {
   message: Message;
   roomId: string;
   isYou: boolean;
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  onOpenPerson: (mxid: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.body);
@@ -257,24 +265,42 @@ function MessageCard({
   if (collapsed) {
     const snippet = message.body.split("\n")[0].slice(0, 140);
     return (
-      <button
-        type="button"
+      <div
         onClick={onToggleCollapsed}
-        className="flex w-full items-center gap-3 border-b border-border px-4 py-3 text-left transition hover:bg-accent/40 sm:px-6"
+        className="flex w-full cursor-pointer items-center gap-3 border-b border-border px-4 py-3 text-left transition hover:bg-accent/40 sm:px-6"
       >
-        <Avatar className="h-7 w-7 shrink-0">
-          <AvatarFallback className="bg-muted font-mono text-[10px]">
-            {message.sender.monogram}
-          </AvatarFallback>
-        </Avatar>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenPerson(message.sender.mxid);
+          }}
+          aria-label={`See all messages from ${message.sender.display_name}`}
+          className="shrink-0 rounded-full"
+        >
+          <Avatar className="h-7 w-7">
+            <AvatarFallback className="bg-muted font-mono text-[10px]">
+              {message.sender.monogram}
+            </AvatarFallback>
+          </Avatar>
+        </button>
         <span className="min-w-0 flex-1 truncate text-sm">
-          <span className="font-medium">{message.sender.display_name}</span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenPerson(message.sender.mxid);
+            }}
+            className="font-medium hover:underline"
+          >
+            {message.sender.display_name}
+          </button>
           <span className="ml-2 text-muted-foreground">{snippet}</span>
         </span>
         <span className="hidden shrink-0 font-mono text-[10px] text-muted-foreground sm:inline">
           {format(new Date(message.ts), "MMM d")}
         </span>
-      </button>
+      </div>
     );
   }
 
@@ -282,22 +308,33 @@ function MessageCard({
     <article className="group relative border-b border-border bg-background px-4 py-4 sm:px-6 sm:py-5">
       <header className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <Avatar className="h-9 w-9 shrink-0">
-            <AvatarFallback
-              className={
-                isYou
-                  ? "bg-primary text-primary-foreground font-mono text-[11px]"
-                  : "bg-muted text-foreground font-mono text-[11px]"
-              }
-            >
-              {message.sender.monogram}
-            </AvatarFallback>
-          </Avatar>
+          <button
+            type="button"
+            onClick={() => onOpenPerson(message.sender.mxid)}
+            aria-label={`See all messages from ${message.sender.display_name}`}
+            className="shrink-0 rounded-full"
+          >
+            <Avatar className="h-9 w-9">
+              <AvatarFallback
+                className={
+                  isYou
+                    ? "bg-primary text-primary-foreground font-mono text-[11px]"
+                    : "bg-muted text-foreground font-mono text-[11px]"
+                }
+              >
+                {message.sender.monogram}
+              </AvatarFallback>
+            </Avatar>
+          </button>
           <div className="flex min-w-0 flex-col">
             <div className="flex items-baseline gap-2 min-w-0">
-              <span className="text-[15px] font-semibold leading-tight">
+              <button
+                type="button"
+                onClick={() => onOpenPerson(message.sender.mxid)}
+                className="text-[15px] font-semibold leading-tight hover:underline"
+              >
                 {message.sender.display_name}
-              </span>
+              </button>
               {message.edited && (
                 <span className="text-[10px] text-muted-foreground">(edited)</span>
               )}
@@ -462,7 +499,23 @@ function MessageCard({
   );
 }
 
+function formatReplyBytes(b: number): string {
+  if (!Number.isFinite(b) || b < 0) return "";
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(0)} KB`;
+  return `${(b / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function ReplyCard({ roomId }: { roomId: string }) {
+  const conversation = useConversation(roomId);
+  const myMxid = useMyMxid();
+  const recipientLabel = useMemo(() => {
+    const others =
+      conversation?.participants.filter((p) => p.mxid !== myMxid) ?? [];
+    if (others.length === 0) return "";
+    return others.map((p) => p.display_name || p.mxid).join(", ");
+  }, [conversation?.participants, myMxid]);
+
   const [open, setOpen] = useState(false);
   const [body, setBody] = useState("");
   const [busy, setBusy] = useState(false);
@@ -560,7 +613,29 @@ function ReplyCard({ roomId }: { roomId: string }) {
         onClose={() => setCodePickerOpen(false)}
         onPick={(picked) => setPendingCode(picked)}
       />
-      <div className="rounded-2xl border border-border bg-surface shadow-sm">
+      <div
+        className="rounded-2xl border border-border bg-surface shadow-sm"
+        onDragOver={(e) => {
+          if (busy) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }}
+        onDrop={(e) => {
+          if (busy) return;
+          const dropped = Array.from(e.dataTransfer.files ?? []);
+          if (dropped.length === 0) return;
+          e.preventDefault();
+          setFiles((prev) => [...prev, ...dropped]);
+        }}
+      >
+        {recipientLabel && (
+          <div className="flex items-center gap-2 border-b border-border px-4 py-2 text-sm">
+            <span className="w-8 shrink-0 text-xs text-muted-foreground">
+              To
+            </span>
+            <span className="truncate">{recipientLabel}</span>
+          </div>
+        )}
         <textarea
           ref={ref}
           value={body}
@@ -581,6 +656,11 @@ function ReplyCard({ roomId }: { roomId: string }) {
               >
                 <Paperclip className="h-3 w-3 text-muted-foreground" />
                 <span className="max-w-[14ch] truncate">{f.name}</span>
+                {f.size > 0 && (
+                  <span className="text-muted-foreground">
+                    {formatReplyBytes(f.size)}
+                  </span>
+                )}
                 <button
                   type="button"
                   className="text-muted-foreground hover:text-foreground"
@@ -665,10 +745,9 @@ function ReplyCard({ roomId }: { roomId: string }) {
               Cancel
             </Button>
             <Button
-              size="sm"
               onClick={() => void send()}
               disabled={busy || (!body.trim() && files.length === 0)}
-              className="gap-1.5 rounded-full"
+              className="inline-flex items-center gap-1.5 rounded-full bg-seal px-5 py-2 text-sm font-medium text-seal-foreground shadow-sm hover:bg-seal hover:brightness-95 disabled:opacity-60"
             >
               <Send className="h-3.5 w-3.5" />
               {busy ? "Sending…" : "Send"}
@@ -680,13 +759,18 @@ function ReplyCard({ roomId }: { roomId: string }) {
   );
 }
 
+type DisplayMode = "email" | "chat";
+
 export function MailDisplay() {
   const selectedRoomId = useMailStore((s) => s.selectedRoomId);
   const setSelectedRoomId = useMailStore((s) => s.setSelectedRoomId);
+  const setPersonViewMxid = useMailStore((s) => s.setPersonViewMxid);
   const conversation = useConversation(selectedRoomId);
   const confirmState = useConfirmState(selectedRoomId);
   const myMxid = useMyMxid();
   const [collapsedSet, setCollapsedSet] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<DisplayMode>("email");
+  const [addPeopleOpen, setAddPeopleOpen] = useState(false);
   const initRoomRef = useRef<string | null>(null);
 
   // When the selected room changes, collapse all messages except the latest.
@@ -784,6 +868,40 @@ export function MailDisplay() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {/* View mode toggle */}
+          <div className="mr-1 inline-flex overflow-hidden rounded-md border border-border text-xs">
+            <button
+              type="button"
+              onClick={() => setMode("email")}
+              aria-pressed={mode === "email"}
+              className={cn(
+                "flex items-center gap-1 px-2 py-1",
+                mode === "email"
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent/50",
+              )}
+            >
+              <MailIcon className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Email</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("chat")}
+              aria-pressed={mode === "chat"}
+              className={cn(
+                "flex items-center gap-1 border-l border-border px-2 py-1",
+                mode === "chat"
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent/50",
+              )}
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Chat</span>
+            </button>
+          </div>
+
+          <ConversationTagPicker conversation={conversation} />
+
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -827,6 +945,10 @@ export function MailDisplay() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setAddPeopleOpen(true)}>
+                <UserPlus className="mr-2 h-3.5 w-3.5" /> Add people…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem disabled>
                 <ReplyAll className="mr-2 h-3.5 w-3.5" /> Reply all · soon
               </DropdownMenuItem>
@@ -858,24 +980,34 @@ export function MailDisplay() {
       )}
 
       {/* Messages */}
-      <ScrollArea className="flex-1">
-        {ordered.length === 0 ? (
-          <div className="px-6 py-12 text-center text-sm text-muted-foreground">
-            No messages yet.
-          </div>
-        ) : (
-          ordered.map((m) => (
-            <MessageCard
-              key={m.event_id}
-              message={m}
-              roomId={conversation.room_id}
-              isYou={m.sender.mxid === myMxid}
-              collapsed={collapsedSet.has(m.event_id)}
-              onToggleCollapsed={() => toggleCollapsed(m.event_id)}
-            />
-          ))
-        )}
-      </ScrollArea>
+      {mode === "chat" ? (
+        <ChatView
+          messages={ordered}
+          roomId={conversation.room_id}
+          myMxid={myMxid}
+          onOpenPerson={setPersonViewMxid}
+        />
+      ) : (
+        <ScrollArea className="flex-1">
+          {ordered.length === 0 ? (
+            <div className="px-6 py-12 text-center text-sm text-muted-foreground">
+              No messages yet.
+            </div>
+          ) : (
+            ordered.map((m) => (
+              <MessageCard
+                key={m.event_id}
+                message={m}
+                roomId={conversation.room_id}
+                isYou={m.sender.mxid === myMxid}
+                collapsed={collapsedSet.has(m.event_id)}
+                onToggleCollapsed={() => toggleCollapsed(m.event_id)}
+                onOpenPerson={setPersonViewMxid}
+              />
+            ))
+          )}
+        </ScrollArea>
+      )}
 
       {confirmState?.status === "awaiting_me" ? (
         <div className="border-t border-border bg-surface px-4 py-3 text-center text-xs text-muted-foreground sm:px-6">
@@ -884,6 +1016,13 @@ export function MailDisplay() {
       ) : (
         <ReplyCard roomId={conversation.room_id} />
       )}
+
+      <AddPeopleModal
+        open={addPeopleOpen}
+        onClose={() => setAddPeopleOpen(false)}
+        roomId={conversation.room_id}
+        conversationLabel={conversation.subject}
+      />
     </div>
   );
 }
