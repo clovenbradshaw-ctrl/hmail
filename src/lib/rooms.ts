@@ -743,6 +743,14 @@ export async function composeNewConversation(opts: {
     /* non-fatal */
   }
   if (opts.body.trim()) {
+    // Build the content (coded or plain) up-front so we can fire-and-forget
+    // the actual send. In an encrypted room, sendMessage waits for the megolm
+    // session to be shared with every member — including invitees whose
+    // homeserver may be unreachable, which can hang indefinitely. Local echo
+    // places the event in the timeline immediately with status='sending', so
+    // the user sees it in the new conversation and can retry from the
+    // failed-message UI if delivery never completes.
+    let content: unknown;
     if (opts.coded) {
       const payload = await encodeMessage(
         opts.body,
@@ -750,21 +758,26 @@ export async function composeNewConversation(opts: {
         opts.coded.scope,
       );
       rememberCodedSenderKey(client, roomId, opts.coded.scope, opts.coded.passphrase);
-      // The SDK's RoomMessageEventContent type doesn't allow our custom
-      // io.hmail.coded field; same cast escape-hatch as sendAttachment uses
-      // for MEDIA_ACCESS_KEY.
-      type SendMsgFn = (roomId: string, content: unknown) => Promise<unknown>;
-      await (client.sendMessage as unknown as SendMsgFn)(roomId, {
+      content = {
         msgtype: MsgType.Text,
         body: CODED_BODY_FALLBACK,
         [CODED_CONTENT_KEY]: payload,
-      });
+      };
     } else {
-      await client.sendMessage(roomId, {
+      content = {
         msgtype: MsgType.Text,
         body: opts.body,
-      });
+      };
     }
+    // The SDK's RoomMessageEventContent type doesn't allow our custom
+    // io.hmail.coded field; same cast escape-hatch as sendAttachment uses
+    // for MEDIA_ACCESS_KEY.
+    type SendMsgFn = (roomId: string, content: unknown) => Promise<unknown>;
+    void (client.sendMessage as unknown as SendMsgFn)(roomId, content).catch(
+      () => {
+        /* surfaced via per-message status in the timeline */
+      },
+    );
   }
   return roomId;
 }
@@ -933,7 +946,16 @@ export async function sendAttachment(
     ? { msgtype: MsgType.Image, ...baseContent }
     : { msgtype: MsgType.File, ...baseContent };
   type SendMsgFn = (roomId: string, content: unknown) => Promise<unknown>;
-  await (client.sendMessage as unknown as SendMsgFn)(roomId, content);
+  // Fire-and-forget the timeline send. The upload above already succeeded
+  // (the real failure point users care about), and encrypted-room sendMessage
+  // can hang waiting on /keys/claim for an invitee whose homeserver isn't
+  // reachable. Local echo reflects the m.image/m.file event in the timeline
+  // with status='sending' / 'failed' so the user can retry from there.
+  void (client.sendMessage as unknown as SendMsgFn)(roomId, content).catch(
+    () => {
+      /* surfaced via per-message status */
+    },
+  );
 }
 
 export function mxcToHttp(mxc: string | undefined): string | null {
