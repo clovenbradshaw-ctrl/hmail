@@ -121,11 +121,44 @@ export interface Conversation {
   in_hmail: boolean;
   tags: string[];
   messages: Message[];
+  /**
+   * When non-null, this conversation has been merged into another thread —
+   * `merged_into` is the primary room_id. Source threads are hidden from
+   * normal lists; their messages get folded into the primary's view.
+   */
+  merged_into: string | null;
+  /**
+   * On a primary thread, the list of source room_ids whose messages are
+   * folded into this view. Empty on non-primary or unmerged threads.
+   */
+  merged_from: string[];
 }
 
 export const ARCHIVED_TAG = "social.hyphae.archived";
 export const HMAIL_TAG = "social.hyphae.hmail";
 const FAVOURITE_TAG = "m.favourite";
+
+/**
+ * Marks a thread as merged into another. The suffix is the primary room_id —
+ * stored as a tag (rather than a state event) so it travels through Matrix's
+ * standard tag sync without special-casing on the homeserver. Only one
+ * merged-into tag is meaningful at a time; helpers below clear stale ones.
+ */
+export const MERGED_INTO_TAG_PREFIX = "social.hyphae.merged-into.";
+
+export function mergedIntoTagFor(primaryRoomId: string): string {
+  return MERGED_INTO_TAG_PREFIX + primaryRoomId;
+}
+
+function extractMergedInto(tagNames: string[]): string | null {
+  for (const t of tagNames) {
+    if (t.startsWith(MERGED_INTO_TAG_PREFIX)) {
+      const id = t.slice(MERGED_INTO_TAG_PREFIX.length);
+      if (id) return id;
+    }
+  }
+  return null;
+}
 
 /**
  * User tags follow the Matrix `u.` namespace so they don't collide with
@@ -413,6 +446,7 @@ function tagsFor(room: Room): {
   starred: boolean;
   archived: boolean;
   in_hmail: boolean;
+  merged_into: string | null;
 } {
   const allTags = room.tags ?? {};
   const tagNames = Object.keys(allTags);
@@ -420,8 +454,13 @@ function tagsFor(room: Room): {
     starred: FAVOURITE_TAG in allTags,
     archived: ARCHIVED_TAG in allTags,
     in_hmail: HMAIL_TAG in allTags,
+    merged_into: extractMergedInto(tagNames),
     tags: tagNames.filter(
-      (t) => t !== FAVOURITE_TAG && t !== ARCHIVED_TAG && t !== HMAIL_TAG,
+      (t) =>
+        t !== FAVOURITE_TAG &&
+        t !== ARCHIVED_TAG &&
+        t !== HMAIL_TAG &&
+        !t.startsWith(MERGED_INTO_TAG_PREFIX),
     ),
   };
 }
@@ -449,7 +488,7 @@ function roomToConversation(client: MatrixClient, room: Room): Conversation {
     if (dm) participants.push(senderFor(client, room, dm));
   }
 
-  const { tags, starred, archived, in_hmail } = tagsFor(room);
+  const { tags, starred, archived, in_hmail, merged_into } = tagsFor(room);
 
   return {
     room_id: room.roomId,
@@ -462,6 +501,8 @@ function roomToConversation(client: MatrixClient, room: Room): Conversation {
     in_hmail,
     tags,
     messages,
+    merged_into,
+    merged_from: [],
   };
 }
 
@@ -494,10 +535,96 @@ export function useAllConversations(): Conversation[] {
   return useSyncExternalStore(subscribeRoomsAndCodes, getStableConversations, () => EMPTY);
 }
 
-/** Only rooms tagged into hmail. */
+/** Only rooms tagged into hmail, with merged sources folded into their primaries. */
 export function useHmailConversations(): Conversation[] {
   const all = useAllConversations();
-  return useMemo(() => all.filter((c) => c.in_hmail), [all]);
+  return useMemo(() => {
+    // Fold across the *full* set first so a source room being merged into a
+    // primary works regardless of whether one or both happen to also carry
+    // the in_hmail tag, then filter for inbox visibility on what remains.
+    const folded = foldMergedThreads(all);
+    return folded.filter((c) => c.in_hmail);
+  }, [all]);
+}
+
+/**
+ * Combine merged source threads into their primaries:
+ *   - Source rooms (those with `merged_into` pointing at a known primary) are
+ *     dropped from the returned list.
+ *   - Primary rooms are augmented: messages, participants, last_activity_ts
+ *     and unread are unioned across the primary + every source.
+ *
+ * Sources whose primary isn't in the input list (e.g. the primary was deleted
+ * or left) are passed through unchanged so they don't disappear silently.
+ */
+export function foldMergedThreads(convs: Conversation[]): Conversation[] {
+  const byId = new Map<string, Conversation>();
+  for (const c of convs) byId.set(c.room_id, c);
+  const sourcesOf = new Map<string, Conversation[]>();
+  for (const c of convs) {
+    if (c.merged_into && byId.has(c.merged_into)) {
+      const arr = sourcesOf.get(c.merged_into) ?? [];
+      arr.push(c);
+      sourcesOf.set(c.merged_into, arr);
+    }
+  }
+  const out: Conversation[] = [];
+  for (const c of convs) {
+    if (c.merged_into && byId.has(c.merged_into)) continue;
+    const sources = sourcesOf.get(c.room_id);
+    if (!sources || sources.length === 0) {
+      out.push(c);
+      continue;
+    }
+    const seenMsg = new Set<string>();
+    const messages: Message[] = [];
+    for (const m of c.messages) {
+      if (seenMsg.has(m.event_id)) continue;
+      seenMsg.add(m.event_id);
+      messages.push(m);
+    }
+    for (const s of sources) {
+      for (const m of s.messages) {
+        if (seenMsg.has(m.event_id)) continue;
+        seenMsg.add(m.event_id);
+        messages.push(m);
+      }
+    }
+    messages.sort(
+      (a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime(),
+    );
+    const seenP = new Set<string>(c.participants.map((p) => p.mxid));
+    const participants: Sender[] = [...c.participants];
+    for (const s of sources) {
+      for (const p of s.participants) {
+        if (seenP.has(p.mxid)) continue;
+        seenP.add(p.mxid);
+        participants.push(p);
+      }
+    }
+    let lastTs = c.last_activity_ts;
+    let unread = c.unread;
+    for (const s of sources) {
+      if (new Date(s.last_activity_ts).getTime() > new Date(lastTs).getTime()) {
+        lastTs = s.last_activity_ts;
+      }
+      if (s.unread) unread = true;
+    }
+    out.push({
+      ...c,
+      messages,
+      participants,
+      last_activity_ts: lastTs,
+      unread,
+      merged_from: sources.map((s) => s.room_id),
+    });
+  }
+  out.sort(
+    (a, b) =>
+      new Date(b.last_activity_ts).getTime() -
+      new Date(a.last_activity_ts).getTime(),
+  );
+  return out;
 }
 
 const EMPTY: Conversation[] = [];
@@ -510,7 +637,7 @@ function snapshotFingerprint(convs: Conversation[]): string {
   return convs
     .map(
       (c) =>
-        `${c.room_id}:${c.last_activity_ts}:${c.unread ? 1 : 0}:${c.starred ? 1 : 0}:${c.archived ? 1 : 0}:${c.in_hmail ? 1 : 0}:${c.messages.length}:${c.messages.map((m) => `${m.event_id}!${m.status}!${m.edited ? "e" : ""}!${m.reactions.length}!${m.coded ? (m.coded.locked ? "L" : "U") : ""}`).join(",")}`,
+        `${c.room_id}:${c.last_activity_ts}:${c.unread ? 1 : 0}:${c.starred ? 1 : 0}:${c.archived ? 1 : 0}:${c.in_hmail ? 1 : 0}:${c.merged_into ?? ""}:${c.messages.length}:${c.messages.map((m) => `${m.event_id}!${m.status}!${m.edited ? "e" : ""}!${m.reactions.length}!${m.coded ? (m.coded.locked ? "L" : "U") : ""}`).join(",")}`,
     )
     .join("|");
 }
@@ -594,10 +721,18 @@ export function useConversation(roomId: string | null): Conversation | null {
   // composed a new conversation, the HMAIL_TAG round-trip can lag the room
   // creation, and we don't want the screen to go blank in that window.
   const all = useAllConversations();
-  return useMemo(
-    () => (roomId ? all.find((c) => c.room_id === roomId) ?? null : null),
-    [all, roomId],
-  );
+  return useMemo(() => {
+    if (!roomId) return null;
+    // If the requested room was merged into another, redirect to the primary
+    // so the open thread doesn't blank out mid-merge.
+    const raw = all.find((c) => c.room_id === roomId);
+    const targetId =
+      raw?.merged_into && all.some((c) => c.room_id === raw.merged_into)
+        ? raw.merged_into
+        : roomId;
+    const folded = foldMergedThreads(all);
+    return folded.find((c) => c.room_id === targetId) ?? null;
+  }, [all, roomId]);
 }
 
 export function useMyMxid(): string | null {
@@ -641,6 +776,87 @@ export async function setArchived(roomId: string, archived: boolean) {
   if (!client) return;
   if (archived) await client.setRoomTag(roomId, ARCHIVED_TAG, {});
   else await client.deleteRoomTag(roomId, ARCHIVED_TAG);
+}
+
+/** Bulk archive / unarchive — best-effort, errors per room are swallowed. */
+export async function setArchivedMany(roomIds: string[], archived: boolean) {
+  await Promise.allSettled(roomIds.map((id) => setArchived(id, archived)));
+}
+
+/**
+ * Mark `sourceRoomId` as merged into `primaryRoomId`. We:
+ *   1. clear any prior merged-into tag (so re-merging into a different
+ *      primary doesn't leave dangling pointers),
+ *   2. set the merged-into.<primary> tag,
+ *   3. archive the source so it stops appearing in normal views even on
+ *      clients that don't understand the merge tag.
+ *
+ * Refuses self-merges silently.
+ */
+export async function setMergedInto(
+  sourceRoomId: string,
+  primaryRoomId: string,
+) {
+  if (sourceRoomId === primaryRoomId) return;
+  const client = getClient();
+  if (!client) return;
+  const room = client.getRoom(sourceRoomId);
+  if (room) {
+    const prior = Object.keys(room.tags ?? {}).filter((t) =>
+      t.startsWith(MERGED_INTO_TAG_PREFIX),
+    );
+    for (const tag of prior) {
+      try {
+        await client.deleteRoomTag(sourceRoomId, tag);
+      } catch {
+        /* keep going — partial cleanup is fine */
+      }
+    }
+  }
+  await client.setRoomTag(sourceRoomId, mergedIntoTagFor(primaryRoomId), {});
+  await client.setRoomTag(sourceRoomId, ARCHIVED_TAG, {});
+}
+
+/**
+ * Remove the merged-into pointer from a source thread, surfacing it again as
+ * an independent conversation. Also unarchives — merge auto-archived it on
+ * the way in, so the symmetric exit is to restore.
+ */
+export async function clearMergedInto(sourceRoomId: string) {
+  const client = getClient();
+  if (!client) return;
+  const room = client.getRoom(sourceRoomId);
+  if (!room) return;
+  const tags = Object.keys(room.tags ?? {}).filter((t) =>
+    t.startsWith(MERGED_INTO_TAG_PREFIX),
+  );
+  for (const tag of tags) {
+    try {
+      await client.deleteRoomTag(sourceRoomId, tag);
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    await client.deleteRoomTag(sourceRoomId, ARCHIVED_TAG);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Merge a set of threads into one. Returns the primary room_id used. The
+ * caller is responsible for confirming with the user when the source threads
+ * have different participants — `mergeThreads` itself won't second-guess.
+ */
+export async function mergeThreads(
+  primaryRoomId: string,
+  sourceRoomIds: string[],
+) {
+  const sources = sourceRoomIds.filter((id) => id && id !== primaryRoomId);
+  await Promise.allSettled(
+    sources.map((id) => setMergedInto(id, primaryRoomId)),
+  );
 }
 
 export async function adoptIntoHmail(roomId: string) {
