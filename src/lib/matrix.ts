@@ -98,6 +98,46 @@ function notify() {
   for (const fn of _listeners) fn();
 }
 
+// Mirrors HMAIL_TAG in rooms.ts. Inlined to avoid a module-init cycle
+// (rooms.ts imports `subscribe` from this file). If the canonical tag name
+// ever changes, update both.
+const HMAIL_TAG_VALUE = "social.hyphae.hmail";
+const _autoJoiningRooms = new Set<string>();
+
+/**
+ * hmail is email-shaped: a message arriving from a sender should land in the
+ * inbox without the recipient first having to "accept" anything. Matrix
+ * exposes new conversations as `invite`-membership rooms that get filtered
+ * out of every list until joined. We auto-join, then tag with HMAIL_TAG so
+ * the room shows up in `useHmailConversations`.
+ */
+async function autoAcceptInvite(client: MatrixClient, roomId: string) {
+  if (_autoJoiningRooms.has(roomId)) return;
+  _autoJoiningRooms.add(roomId);
+  try {
+    await client.joinRoom(roomId);
+    try {
+      await client.setRoomTag(roomId, HMAIL_TAG_VALUE, {});
+    } catch (err) {
+      // Joining is the must-have; tagging is best-effort. The user can
+      // still adopt the room from Manage Rooms if this lags.
+      console.warn("[hmail] failed to tag accepted invite", roomId, err);
+    }
+  } catch (err) {
+    console.warn("[hmail] auto-accept invite failed", roomId, err);
+  } finally {
+    _autoJoiningRooms.delete(roomId);
+  }
+}
+
+function autoAcceptPendingInvites(client: MatrixClient) {
+  for (const room of client.getRooms()) {
+    if (room.getMyMembership() === "invite") {
+      void autoAcceptInvite(client, room.roomId);
+    }
+  }
+}
+
 export function subscribe(cb: () => void): () => void {
   _listeners.add(cb);
   return () => _listeners.delete(cb);
@@ -195,6 +235,10 @@ function attachListeners(client: MatrixClient) {
       void loadVault(client).catch((err) =>
         console.warn("[hmail] coded vault warm load failed", err),
       );
+      // Sweep invites that were already pending at sync time. The
+      // MyMembership listener catches live invites; this catches the
+      // ones that landed before this client was running.
+      void autoAcceptPendingInvites(client);
     } else if (state === "SYNCING") _syncState = "syncing";
     else if (state === "ERROR") _syncState = "error";
     notify();
@@ -203,7 +247,12 @@ function attachListeners(client: MatrixClient) {
   client.on(RoomEvent.Timeline, () => notify());
   client.on(RoomEvent.Redaction, () => notify());
   client.on(RoomEvent.Receipt, () => notify());
-  client.on(RoomEvent.MyMembership, () => notify());
+  client.on(RoomEvent.MyMembership, (room, membership) => {
+    notify();
+    if (membership === "invite") {
+      void autoAcceptInvite(client, room.roomId);
+    }
+  });
   client.on(RoomEvent.Tags, () => notify());
   client.on(RoomEvent.Name, () => notify());
   client.on(RoomStateEvent.Events, () => notify());
