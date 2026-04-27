@@ -22,7 +22,7 @@ import {
 } from "@/lib/rooms";
 import { ShareCodeModal } from "@/components/mail/share-code-modal";
 import { CodeComposeModal } from "@/components/mail/coded-modals";
-import type { CodeScope } from "@/lib/coded";
+import { generateCode, type CodeScope } from "@/lib/coded";
 
 type WindowState = "normal" | "minimized" | "fullscreen";
 
@@ -75,12 +75,14 @@ export function Compose() {
   const [shareRecipient, setShareRecipient] = useState<string>("");
   const [shareOpen, setShareOpen] = useState(false);
 
-  // Coded-message state.
+  // Coded-message state. Defaults to a fresh thread-scoped code so the
+  // recipient always lands on an Unlock prompt; user can toggle off via the
+  // Lock button. Reset to a new code each time compose opens.
   const [codePickerOpen, setCodePickerOpen] = useState(false);
   const [pendingCode, setPendingCode] = useState<{
     scope: CodeScope;
     passphrase: string;
-  } | null>(null);
+  } | null>(() => ({ scope: "thread", passphrase: generateCode() }));
 
   const knownContacts = useKnownContacts();
 
@@ -118,6 +120,12 @@ export function Compose() {
       setShowSuggestions(false);
       setWindowState("normal");
       setPendingCode(null);
+    } else {
+      // Re-arm the default thread code each time the window opens so a
+      // re-opened draft doesn't reuse the previous (already-shared) code.
+      setPendingCode((prev) =>
+        prev ?? { scope: "thread", passphrase: generateCode() },
+      );
     }
   }, [open]);
 
@@ -166,16 +174,19 @@ export function Compose() {
       for (const f of files) {
         await sendAttachment(roomId, f, [trimmed]);
       }
-      const code = generateConfirmationCode(6);
+      // Identity-verification "confirmation request" still fires in the
+      // background, but the code surfaced to the sender in the share modal is
+      // the encryption passphrase — that's what the recipient must enter to
+      // unlock the message body.
       try {
-        await sendConfirmationRequest(roomId, code);
+        await sendConfirmationRequest(roomId, generateConfirmationCode(6));
       } catch {
         /* non-fatal — the banner will let them retry */
       }
       setSelectedRoomId(roomId);
-      setShareCode(code);
+      setShareCode(pendingCode ? pendingCode.passphrase : null);
       setShareRecipient(trimmed);
-      setShareOpen(true);
+      setShareOpen(!!pendingCode);
       setOpen(false);
     } catch (err) {
       setError(describeComposeError(err, to.trim()));

@@ -62,6 +62,7 @@ import {
   CodeComposeModal,
   CodeUnlockModal,
 } from "@/components/mail/coded-modals";
+import { getCachedThreadCode } from "@/lib/coded-vault";
 
 const REACTION_PALETTE = ["👍", "❤️", "😂", "🎉", "🤔", "🙏"];
 
@@ -461,6 +462,16 @@ function ReplyCard({ roomId }: { roomId: string }) {
     el.style.height = "auto";
     el.style.height = Math.min(el.scrollHeight, 240) + "px";
   }, [body, open]);
+
+  // If this thread already has a cached code (because the user unlocked an
+  // earlier message or sent the first one with a code), default the reply to
+  // use it so the encrypted thread stays encrypted without an extra click.
+  useEffect(() => {
+    if (!open) return;
+    if (pendingCode) return;
+    const cached = getCachedThreadCode(roomId);
+    if (cached) setPendingCode({ scope: "thread", passphrase: cached });
+  }, [open, roomId, pendingCode]);
 
   async function send() {
     if (busy) return;

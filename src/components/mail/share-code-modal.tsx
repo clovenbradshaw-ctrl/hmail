@@ -55,7 +55,7 @@ export function ShareCodeModal({
   const text =
     message ??
     `It's me. To unlock our hmail conversation, enter this code: ${code}`;
-  const subject = "hmail confirmation code";
+  const subject = "hmail unlock code";
 
   async function copyAll() {
     try {
@@ -79,20 +79,20 @@ export function ShareCodeModal({
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Confirm your recipient">
+    <Modal open={open} onClose={onClose} title="Share the unlock code">
       <div className="flex flex-col gap-5 p-5">
         <p className="text-sm text-muted-foreground">
-          Send this code to{" "}
+          Your message is encrypted with this code. Send it to{" "}
           <span className="font-mono text-foreground">{recipient}</span> via a
-          channel you both already trust. They'll need to enter it on their
-          side to unlock the conversation.
+          channel you both already trust — they'll enter it to unlock the
+          message on their side.
         </p>
 
         <div className="rounded-xl border border-border bg-surface p-5 text-center">
           <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-            Confirmation code
+            Unlock code
           </div>
-          <div className="mt-2 font-mono text-3xl font-bold tracking-[0.4em] sm:text-4xl">
+          <div className="mt-2 break-all font-mono text-2xl font-bold tracking-[0.15em] sm:text-3xl">
             {code}
           </div>
         </div>
