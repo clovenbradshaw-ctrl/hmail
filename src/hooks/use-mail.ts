@@ -1,6 +1,11 @@
 import { create } from "zustand";
 
-type Folder = "inbox" | "starred" | "archive" | "media";
+export type Folder =
+  | "people"
+  | "groups"
+  | "starred"
+  | "archive"
+  | "media";
 
 export type SortKey =
   | "date-desc"
@@ -48,7 +53,7 @@ interface MailState {
 export const useMailStore = create<MailState>((set) => ({
   selectedRoomId: null,
   setSelectedRoomId: (id) => set({ selectedRoomId: id, personViewMxid: null }),
-  folder: "inbox",
+  folder: "people",
   setFolder: (folder) =>
     set({ folder, selectedRoomId: null, personViewMxid: null, activeTag: null }),
   composeOpen: false,

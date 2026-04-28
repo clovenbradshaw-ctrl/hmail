@@ -14,8 +14,9 @@ const SECTIONS: { title: string; rows: ShortcutRow[] }[] = [
     rows: [
       { keys: ["j", "↓"], label: "Next conversation" },
       { keys: ["k", "↑"], label: "Previous conversation" },
-      { keys: ["Esc"], label: "Back to inbox / close compose" },
-      { keys: ["g", "i"], label: "Go to inbox", sequence: true },
+      { keys: ["Esc"], label: "Back / close compose" },
+      { keys: ["g", "p"], label: "Go to people", sequence: true },
+      { keys: ["g", "g"], label: "Go to groups", sequence: true },
       { keys: ["g", "s"], label: "Go to starred", sequence: true },
       { keys: ["g", "a"], label: "Go to archive", sequence: true },
     ],

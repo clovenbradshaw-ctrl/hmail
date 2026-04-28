@@ -8,6 +8,7 @@ import { ManageRooms } from "@/components/mail/manage-rooms";
 import { Profile } from "@/components/mail/profile";
 import { KeyboardHelp } from "@/components/mail/keyboard-help";
 import { PersonView } from "@/components/mail/person-view";
+import { ContactsList } from "@/components/mail/contacts-list";
 import { useMailStore } from "@/hooks/use-mail";
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts";
 import { cn } from "@/lib/utils";
@@ -26,6 +27,8 @@ export function Mail() {
     <MailDisplay />
   ) : folder === "media" ? (
     <MediaStore />
+  ) : folder === "people" ? (
+    <ContactsList />
   ) : (
     <MailList />
   );

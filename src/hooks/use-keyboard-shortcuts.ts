@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useMailStore } from "@/hooks/use-mail";
+import { useMailStore, type Folder } from "@/hooks/use-mail";
 import {
   setArchived,
   setStarred,
@@ -17,15 +17,17 @@ function isTextEntryTarget(t: EventTarget | null): boolean {
 
 /**
  * Filter conversations the same way MailList does, so j/k follow what's on
- * screen. Inbox = non-archived; starred = starred; archive = archived.
+ * screen. groups = non-archived non-DM; starred = starred; archive = archived;
+ * people/media views don't list rooms — keyboard nav falls back to non-archived.
  */
 function visibleConversations(
   all: Conversation[],
-  folder: "inbox" | "starred" | "archive" | "media",
+  folder: Folder,
 ): Conversation[] {
   if (folder === "starred") return all.filter((c) => c.starred);
   if (folder === "archive") return all.filter((c) => c.archived);
-  // Media view doesn't list conversations; keyboard nav falls back to inbox.
+  if (folder === "groups")
+    return all.filter((c) => !c.archived && !c.dm_with_mxid);
   return all.filter((c) => !c.archived);
 }
 
@@ -40,7 +42,8 @@ function visibleConversations(
  * k / ↑    — previous conversation in current folder
  * s        — star/unstar selected
  * e        — archive/unarchive selected
- * g i      — go to inbox
+ * g p      — go to people
+ * g g      — go to groups
  * g s      — go to starred
  * g a      — go to archive
  */
@@ -140,16 +143,21 @@ export function useKeyboardShortcuts() {
           return;
         }
         case "g": {
+          if (prefix === "g") {
+            e.preventDefault();
+            setFolder("groups");
+            return;
+          }
           if (composeOpen || helpOpen) return;
           pendingPrefix.current = "g";
           pendingPrefixAt.current = now;
           e.preventDefault();
           return;
         }
-        case "i": {
+        case "p": {
           if (prefix === "g") {
             e.preventDefault();
-            setFolder("inbox");
+            setFolder("people");
           }
           return;
         }

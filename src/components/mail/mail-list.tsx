@@ -230,6 +230,8 @@ export function MailList() {
     let list: Conversation[];
     if (folder === "starred") list = all.filter((c) => c.starred);
     else if (folder === "archive") list = all.filter((c) => c.archived);
+    else if (folder === "groups")
+      list = all.filter((c) => !c.archived && !c.dm_with_mxid);
     else list = all.filter((c) => !c.archived);
     if (unreadOnly) list = list.filter((c) => c.unread);
     if (attachmentsOnly)
@@ -461,9 +463,11 @@ export function MailList() {
                 ? "Archive is empty."
                 : folder === "starred"
                 ? "No starred conversations."
+                : folder === "groups"
+                ? "No group conversations yet."
                 : "Your hmail inbox is empty."}
             </p>
-            {folder === "inbox" && !searchQuery.trim() && !activeTag && (
+            {folder === "groups" && !searchQuery.trim() && !activeTag && (
               <button
                 type="button"
                 onClick={() => setManageRoomsOpen(true)}
