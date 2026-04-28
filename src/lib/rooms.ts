@@ -122,6 +122,12 @@ export interface Conversation {
   tags: string[];
   messages: Message[];
   /**
+   * MXID of the other party iff this room is a 1:1 DM (exactly one other
+   * joined member, recognised by `m.direct` or guessDMUserId). null for group
+   * rooms. Drives People-view aggregation and reply-target selection.
+   */
+  dm_with_mxid: string | null;
+  /**
    * When non-null, this conversation has been merged into another thread —
    * `merged_into` is the primary room_id. Source threads are hidden from
    * normal lists; their messages get folded into the primary's view.
@@ -490,6 +496,18 @@ function roomToConversation(client: MatrixClient, room: Room): Conversation {
 
   const { tags, starred, archived, in_hmail, merged_into } = tagsFor(room);
 
+  // A room is a DM in our model iff there's exactly one other joined member
+  // and the SDK can guess them (which checks `m.direct` first, then falls back
+  // to small-room heuristics). Group rooms with two members that just happen
+  // to be small are still treated as groups.
+  const otherJoined = room
+    .getJoinedMembers()
+    .filter((m) => m.userId !== myUserId);
+  const dm_with_mxid =
+    otherJoined.length === 1
+      ? room.guessDMUserId() ?? otherJoined[0].userId
+      : null;
+
   return {
     room_id: room.roomId,
     subject: room.name || room.normalizedName || room.roomId,
@@ -501,6 +519,7 @@ function roomToConversation(client: MatrixClient, room: Room): Conversation {
     in_hmail,
     tags,
     messages,
+    dm_with_mxid,
     merged_into,
     merged_from: [],
   };
@@ -637,7 +656,7 @@ function snapshotFingerprint(convs: Conversation[]): string {
   return convs
     .map(
       (c) =>
-        `${c.room_id}:${c.last_activity_ts}:${c.unread ? 1 : 0}:${c.starred ? 1 : 0}:${c.archived ? 1 : 0}:${c.in_hmail ? 1 : 0}:${c.merged_into ?? ""}:${c.messages.length}:${c.messages.map((m) => `${m.event_id}!${m.status}!${m.edited ? "e" : ""}!${m.reactions.length}!${m.coded ? (m.coded.locked ? "L" : "U") : ""}`).join(",")}`,
+        `${c.room_id}:${c.last_activity_ts}:${c.unread ? 1 : 0}:${c.starred ? 1 : 0}:${c.archived ? 1 : 0}:${c.in_hmail ? 1 : 0}:${c.dm_with_mxid ?? "G"}:${c.merged_into ?? ""}:${c.messages.length}:${c.messages.map((m) => `${m.event_id}!${m.status}!${m.edited ? "e" : ""}!${m.reactions.length}!${m.coded ? (m.coded.locked ? "L" : "U") : ""}`).join(",")}`,
     )
     .join("|");
 }
@@ -679,13 +698,16 @@ export function useConversations(): Conversation[] {
 }
 
 /**
- * Aggregate every message authored by a single MXID across every joined room
- * — the "messages from this person" long chain. Messages keep their original
- * room context (room_id + subject) so the view can link back to each thread.
+ * Aggregate every message exchanged with a single MXID across every joined
+ * room — both directions, DMs and groups. Messages keep their original room
+ * context (room_id + subject + is_dm) so the view can label and link back to
+ * each thread, and the caller knows where a reply should land by default.
  */
 export interface PersonMessage extends Message {
   room_id: string;
   room_subject: string;
+  /** True if the source room is the 1:1 DM with this contact. */
+  is_dm: boolean;
 }
 
 export interface PersonMessages {
@@ -693,27 +715,207 @@ export interface PersonMessages {
   display_name: string;
   monogram: string;
   messages: PersonMessage[];
+  /** Where a reply from the people view should go by default. */
+  default_reply_room_id: string | null;
+  default_reply_is_dm: boolean;
+  default_reply_room_subject: string | null;
 }
+
+/**
+ * One row of the People-view inbox: a single contact and a snapshot of the
+ * latest exchange with them across every shared room.
+ */
+export interface ContactSummary {
+  mxid: string;
+  display_name: string;
+  monogram: string;
+  last_message_ts: string;
+  last_message_snippet: string;
+  last_message_is_mine: boolean;
+  last_message_room_id: string;
+  last_message_room_subject: string;
+  last_message_is_dm: boolean;
+  unread_room_count: number;
+  dm_room_id: string | null;
+  shared_room_ids: string[];
+}
+
+function snippetFor(m: Message): string {
+  if (m.redacted) return "(retracted)";
+  if (m.coded?.locked) return "🔒 Coded message";
+  if (m.attachment && !m.body.trim()) return `📎 ${m.attachment.name}`;
+  const body = m.body.replace(/\s+/g, " ").trim();
+  return body.length > 140 ? body.slice(0, 140) + "…" : body;
+}
+
+/**
+ * Pick the room a reply from the People view should target. Prefers the 1:1
+ * DM with this contact; falls back to the most-recently-active shared room.
+ * Returns null if we have no room with this person at all (the caller should
+ * spin up a new DM via composeNewConversation).
+ */
+export function pickReplyTarget(
+  mxid: string,
+  conversations: Conversation[],
+): { room_id: string; is_dm: boolean; subject: string } | null {
+  let dm: Conversation | null = null;
+  let mostRecentShared: Conversation | null = null;
+  for (const c of conversations) {
+    const isParticipant = c.participants.some((p) => p.mxid === mxid);
+    if (!isParticipant) continue;
+    if (c.dm_with_mxid === mxid) {
+      if (!dm || c.last_activity_ts > dm.last_activity_ts) dm = c;
+    }
+    if (
+      !mostRecentShared ||
+      c.last_activity_ts > mostRecentShared.last_activity_ts
+    ) {
+      mostRecentShared = c;
+    }
+  }
+  if (dm) return { room_id: dm.room_id, is_dm: true, subject: dm.subject };
+  if (mostRecentShared)
+    return {
+      room_id: mostRecentShared.room_id,
+      is_dm: false,
+      subject: mostRecentShared.subject,
+    };
+  return null;
+}
+
+export function useContacts(): ContactSummary[] {
+  const all = useAllConversations();
+  const myMxid = useMyMxid();
+  return useMemo(() => {
+    if (!myMxid) return EMPTY_CONTACTS_LIST;
+    const byMxid = new Map<string, ContactSummary>();
+    for (const c of all) {
+      // Build the contact set from joined participants — covers both direct
+      // and group rooms even before any messages have been exchanged.
+      for (const p of c.participants) {
+        if (p.mxid === myMxid) continue;
+        let row = byMxid.get(p.mxid);
+        if (!row) {
+          row = {
+            mxid: p.mxid,
+            display_name: p.display_name || p.mxid,
+            monogram: p.monogram || "?",
+            last_message_ts: "",
+            last_message_snippet: "",
+            last_message_is_mine: false,
+            last_message_room_id: c.room_id,
+            last_message_room_subject: c.subject,
+            last_message_is_dm: c.dm_with_mxid === p.mxid,
+            unread_room_count: 0,
+            dm_room_id: null,
+            shared_room_ids: [],
+          };
+          byMxid.set(p.mxid, row);
+        }
+        if (p.display_name) row.display_name = p.display_name;
+        if (p.monogram) row.monogram = p.monogram;
+        if (!row.shared_room_ids.includes(c.room_id))
+          row.shared_room_ids.push(c.room_id);
+        if (c.dm_with_mxid === p.mxid && !row.dm_room_id)
+          row.dm_room_id = c.room_id;
+        if (c.unread) row.unread_room_count += 1;
+      }
+
+      // Walk this room's messages and update last-exchange snapshots for any
+      // contact involved (sender = me or contact). Third-party messages in a
+      // group room don't count toward "messages with X".
+      for (const m of c.messages) {
+        if (m.redacted) continue;
+        const senderIsMe = m.sender.mxid === myMxid;
+        const targets = senderIsMe
+          ? c.participants.filter((p) => p.mxid !== myMxid)
+          : byMxid.has(m.sender.mxid)
+            ? [{ mxid: m.sender.mxid }]
+            : [];
+        for (const t of targets) {
+          const row = byMxid.get(t.mxid);
+          if (!row) continue;
+          if (!row.last_message_ts || m.ts > row.last_message_ts) {
+            row.last_message_ts = m.ts;
+            row.last_message_snippet = snippetFor(m);
+            row.last_message_is_mine = senderIsMe;
+            row.last_message_room_id = c.room_id;
+            row.last_message_room_subject = c.subject;
+            row.last_message_is_dm = c.dm_with_mxid === t.mxid;
+          }
+        }
+      }
+    }
+
+    // Bare rows with no messages yet (a freshly invited contact, or a group
+    // where they haven't spoken) get the room's last-activity timestamp so
+    // they're not pinned at the bottom of the list with empty timestamps.
+    for (const row of byMxid.values()) {
+      if (row.last_message_ts) continue;
+      const c = all.find((conv) => conv.room_id === row.last_message_room_id);
+      if (c) row.last_message_ts = c.last_activity_ts;
+    }
+
+    return Array.from(byMxid.values()).sort((a, b) => {
+      if (a.last_message_ts === b.last_message_ts) return 0;
+      return a.last_message_ts < b.last_message_ts ? 1 : -1;
+    });
+  }, [all, myMxid]);
+}
+
+const EMPTY_CONTACTS_LIST: ContactSummary[] = [];
 
 export function useMessagesFromPerson(mxid: string | null): PersonMessages | null {
   const all = useAllConversations();
+  const myMxid = useMyMxid();
   return useMemo(() => {
     if (!mxid) return null;
     const out: PersonMessage[] = [];
     let display = mxid;
     let monogram = "?";
     for (const c of all) {
+      const isParticipant = c.participants.some((p) => p.mxid === mxid);
+      if (!isParticipant) continue;
+      const isDm = c.dm_with_mxid === mxid;
       for (const m of c.messages) {
-        if (m.sender.mxid !== mxid) continue;
         if (m.redacted) continue;
-        out.push({ ...m, room_id: c.room_id, room_subject: c.subject });
-        display = m.sender.display_name || display;
-        monogram = m.sender.monogram || monogram;
+        // Only include the back-and-forth between me and the contact. Other
+        // group members' chatter would just be noise in the per-person stream.
+        const isFromContact = m.sender.mxid === mxid;
+        const isFromMe = !!myMxid && m.sender.mxid === myMxid;
+        if (!isFromContact && !isFromMe) continue;
+        out.push({
+          ...m,
+          room_id: c.room_id,
+          room_subject: c.subject,
+          is_dm: isDm,
+        });
+        if (isFromContact) {
+          display = m.sender.display_name || display;
+          monogram = m.sender.monogram || monogram;
+        }
+      }
+      // Fall back to participant metadata if we never saw a message from them.
+      if (display === mxid) {
+        const p = c.participants.find((pp) => pp.mxid === mxid);
+        if (p) {
+          display = p.display_name || display;
+          monogram = p.monogram || monogram;
+        }
       }
     }
     out.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
-    return { mxid, display_name: display, monogram, messages: out };
-  }, [all, mxid]);
+    const target = pickReplyTarget(mxid, all);
+    return {
+      mxid,
+      display_name: display,
+      monogram,
+      messages: out,
+      default_reply_room_id: target?.room_id ?? null,
+      default_reply_is_dm: target?.is_dm ?? false,
+      default_reply_room_subject: target?.subject ?? null,
+    };
+  }, [all, mxid, myMxid]);
 }
 
 export function useConversation(roomId: string | null): Conversation | null {

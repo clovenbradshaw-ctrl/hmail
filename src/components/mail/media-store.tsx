@@ -177,7 +177,7 @@ function MediaDetails({
 
   function openConversation() {
     onClose();
-    setFolder("inbox");
+    setFolder("groups");
     setSelectedRoomId(item.room_id);
   }
 

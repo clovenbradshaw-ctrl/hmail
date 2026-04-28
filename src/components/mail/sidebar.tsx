@@ -9,11 +9,17 @@ import {
   LogOut,
   ListChecks,
   Paperclip,
+  Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
-import { useMailStore } from "@/hooks/use-mail";
-import { useConversations, useMyMxid, userTagLabel } from "@/lib/rooms";
+import { useMailStore, type Folder } from "@/hooks/use-mail";
+import {
+  useContacts,
+  useConversations,
+  useMyMxid,
+  userTagLabel,
+} from "@/lib/rooms";
 import { useMyDisplayName } from "@/lib/profile";
 import { logout } from "@/lib/matrix";
 
@@ -21,12 +27,13 @@ interface NavItem {
   label: string;
   icon: typeof Inbox;
   count?: number;
-  folder?: "inbox" | "starred" | "archive" | "media";
+  folder?: Folder;
   disabled?: boolean;
 }
 
 export function Sidebar() {
   const conversations = useConversations();
+  const contacts = useContacts();
   const myMxid = useMyMxid();
   const myDisplayName = useMyDisplayName();
   const folder = useMailStore((s) => s.folder);
@@ -38,7 +45,10 @@ export function Sidebar() {
   const activeTag = useMailStore((s) => s.activeTag);
   const setActiveTag = useMailStore((s) => s.setActiveTag);
 
-  const inboxUnread = conversations.filter((c) => !c.archived && c.unread).length;
+  const peopleUnread = contacts.filter((c) => c.unread_room_count > 0).length;
+  const groupsUnread = conversations.filter(
+    (c) => !c.archived && c.unread && !c.dm_with_mxid,
+  ).length;
   const starredCount = conversations.filter((c) => c.starred).length;
   const archivedCount = conversations.filter((c) => c.archived).length;
   const mediaCount = conversations.reduce(
@@ -48,7 +58,8 @@ export function Sidebar() {
   );
 
   const items: NavItem[] = [
-    { label: "Inbox", icon: Inbox, count: inboxUnread, folder: "inbox" },
+    { label: "People", icon: Users, count: peopleUnread, folder: "people" },
+    { label: "Groups", icon: Inbox, count: groupsUnread, folder: "groups" },
     { label: "Starred", icon: Star, count: starredCount, folder: "starred" },
     { label: "Sent", icon: Send, disabled: true },
     { label: "Drafts", icon: FileText, disabled: true },
