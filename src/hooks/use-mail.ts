@@ -48,14 +48,35 @@ interface MailState {
   /** When non-null, the main pane shows the long chain of messages from this MXID. */
   personViewMxid: string | null;
   setPersonViewMxid: (mxid: string | null) => void;
+
+  /**
+   * Room IDs the user has bulk-selected in the mail list. Drives the
+   * inline action bar (Archive, Merge, …). Cleared on folder switch and
+   * when a single conversation is opened.
+   */
+  selectedRoomIds: string[];
+  toggleRoomSelected: (id: string) => void;
+  setRoomsSelected: (ids: string[]) => void;
+  clearRoomSelection: () => void;
+
+  /** When set, the merge confirmation modal is rendered. */
+  mergeModalOpen: boolean;
+  setMergeModalOpen: (open: boolean) => void;
 }
 
 export const useMailStore = create<MailState>((set) => ({
   selectedRoomId: null,
-  setSelectedRoomId: (id) => set({ selectedRoomId: id, personViewMxid: null }),
+  setSelectedRoomId: (id) =>
+    set({ selectedRoomId: id, personViewMxid: null, selectedRoomIds: [] }),
   folder: "people",
   setFolder: (folder) =>
-    set({ folder, selectedRoomId: null, personViewMxid: null, activeTag: null }),
+    set({
+      folder,
+      selectedRoomId: null,
+      personViewMxid: null,
+      activeTag: null,
+      selectedRoomIds: [],
+    }),
   composeOpen: false,
   setComposeOpen: (composeOpen) => set({ composeOpen }),
   manageRoomsOpen: false,
@@ -82,4 +103,17 @@ export const useMailStore = create<MailState>((set) => ({
   personViewMxid: null,
   setPersonViewMxid: (personViewMxid) =>
     set({ personViewMxid, selectedRoomId: null }),
+
+  selectedRoomIds: [],
+  toggleRoomSelected: (id) =>
+    set((s) => ({
+      selectedRoomIds: s.selectedRoomIds.includes(id)
+        ? s.selectedRoomIds.filter((x) => x !== id)
+        : [...s.selectedRoomIds, id],
+    })),
+  setRoomsSelected: (ids) => set({ selectedRoomIds: ids }),
+  clearRoomSelection: () => set({ selectedRoomIds: [] }),
+
+  mergeModalOpen: false,
+  setMergeModalOpen: (mergeModalOpen) => set({ mergeModalOpen }),
 }));

@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   Smile,
   ArchiveRestore,
+  Layers,
   Pencil,
   Eraser,
   Clock,
@@ -43,6 +44,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useMailStore } from "@/hooks/use-mail";
 import {
+  clearMergedInto,
   editMessage,
   markRoomRead,
   retractMessage,
@@ -52,6 +54,7 @@ import {
   setArchived,
   setStarred,
   toggleReaction,
+  useAllConversations,
   useConfirmState,
   useConversation,
   useMyMxid,
@@ -69,6 +72,7 @@ import { getCachedThreadCode } from "@/lib/coded-vault";
 import { ConversationTagPicker } from "@/components/mail/tag-picker";
 import { ChatView } from "@/components/mail/chat-view";
 import { AddPeopleModal } from "@/components/mail/add-people";
+import { Modal } from "@/components/ui/modal";
 import { UserPlus } from "lucide-react";
 
 const REACTION_PALETTE = ["👍", "❤️", "😂", "🎉", "🤔", "🙏"];
@@ -98,27 +102,63 @@ function AttachmentBlock({ attachment }: { attachment: Attachment }) {
   // access token and render the resulting blob URL instead.
   const blobUrl = useAttachmentUrl(attachment.mxc);
   const hasMedia = !!attachment.mxc;
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   if (attachment.kind === "image" && hasMedia) {
     return (
-      <a
-        href={blobUrl ?? "#"}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="mt-2 inline-block max-w-md overflow-hidden rounded-lg border border-border"
-      >
-        {blobUrl ? (
-          <img
-            src={blobUrl}
-            alt={attachment.name}
-            className="block max-h-80 w-auto"
-            loading="lazy"
-          />
-        ) : (
-          <div className="flex h-40 w-72 items-center justify-center bg-muted text-xs text-muted-foreground">
-            Loading image…
+      <>
+        <button
+          type="button"
+          onClick={() => blobUrl && setLightboxOpen(true)}
+          disabled={!blobUrl}
+          className="mt-2 inline-block max-w-md overflow-hidden rounded-lg border border-border bg-transparent p-0 disabled:cursor-default"
+        >
+          {blobUrl ? (
+            <img
+              src={blobUrl}
+              alt={attachment.name}
+              className="block max-h-80 w-auto cursor-zoom-in"
+              loading="lazy"
+            />
+          ) : (
+            <div className="flex h-40 w-72 items-center justify-center bg-muted text-xs text-muted-foreground">
+              Loading image…
+            </div>
+          )}
+        </button>
+        <Modal
+          open={lightboxOpen}
+          onClose={() => setLightboxOpen(false)}
+          title={
+            <span className="truncate text-sm font-semibold">
+              {attachment.name}
+            </span>
+          }
+          className="sm:max-w-4xl"
+        >
+          <div className="flex flex-col gap-3 p-4">
+            {blobUrl && (
+              <img
+                src={blobUrl}
+                alt={attachment.name}
+                className="block max-h-[75vh] w-full rounded-md object-contain"
+              />
+            )}
+            <div className="flex justify-end">
+              <a
+                href={blobUrl ?? "#"}
+                download={attachment.name}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button variant="outline" size="sm" className="gap-1.5">
+                  <Download className="h-3.5 w-3.5" />
+                  Download
+                </Button>
+              </a>
+            </div>
           </div>
-        )}
-      </a>
+        </Modal>
+      </>
     );
   }
   return (
@@ -525,8 +565,14 @@ function ReplyCard({ roomId }: { roomId: string }) {
     scope: "always" | "thread" | "message";
     passphrase: string;
   } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  // Tracks the roomId we've already hydrated `pendingCode` from cache for in
+  // the current open session. Reset when the card closes so reopening picks
+  // up any new cached code, but preserved across renders so the user can
+  // explicitly clear the lock without it snapping back on.
+  const hydratedFor = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -539,18 +585,31 @@ function ReplyCard({ roomId }: { roomId: string }) {
   // If this thread already has a cached code (because the user unlocked an
   // earlier message or sent the first one with a code), default the reply to
   // use it so the encrypted thread stays encrypted without an extra click.
+  // Only seed once per open session — otherwise clearing the lock would just
+  // re-apply the cached code on the next render.
   useEffect(() => {
-    if (!open) return;
-    if (pendingCode) return;
+    if (!open) {
+      hydratedFor.current = null;
+      return;
+    }
+    if (hydratedFor.current === roomId) return;
+    hydratedFor.current = roomId;
     const cached = getCachedThreadCode(roomId);
     if (cached) setPendingCode({ scope: "thread", passphrase: cached });
-  }, [open, roomId, pendingCode]);
+  }, [open, roomId]);
+
+  // Clear any prior send error once the user reacts (edits text, changes
+  // attachments, or toggles the lock).
+  useEffect(() => {
+    setError(null);
+  }, [body, files, pendingCode]);
 
   async function send() {
     if (busy) return;
     const text = body.trim();
     if (!text && files.length === 0) return;
     setBusy(true);
+    setError(null);
     try {
       if (text) {
         if (pendingCode) {
@@ -571,6 +630,13 @@ function ReplyCard({ roomId }: { roomId: string }) {
       setFiles([]);
       setPendingCode(null);
       setOpen(false);
+    } catch (err) {
+      console.warn("[hmail] reply send failed", err);
+      setError(
+        pendingCode
+          ? "Couldn't send the locked message. Click the lock to remove it, then try again."
+          : "Couldn't send. Try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -673,6 +739,14 @@ function ReplyCard({ roomId }: { roomId: string }) {
             ))}
           </div>
         )}
+        {error && (
+          <div
+            role="alert"
+            className="border-t border-border px-4 py-2 text-xs text-destructive"
+          >
+            {error}
+          </div>
+        )}
         <div className="flex items-center justify-between gap-2 border-t border-border px-2 py-2">
           <div className="flex items-center gap-1">
             <input
@@ -768,6 +842,12 @@ export function MailDisplay() {
   const conversation = useConversation(selectedRoomId);
   const confirmState = useConfirmState(selectedRoomId);
   const myMxid = useMyMxid();
+  const allConvs = useAllConversations();
+  const mergedSources = useMemo(() => {
+    if (!conversation || conversation.merged_from.length === 0) return [];
+    const ids = new Set(conversation.merged_from);
+    return allConvs.filter((c) => ids.has(c.room_id));
+  }, [conversation, allConvs]);
   const [collapsedSet, setCollapsedSet] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<DisplayMode>("email");
   const [addPeopleOpen, setAddPeopleOpen] = useState(false);
@@ -864,6 +944,20 @@ export function MailDisplay() {
               <span className="font-mono">
                 {ordered.length} {ordered.length === 1 ? "message" : "messages"}
               </span>
+              {mergedSources.length > 0 && (
+                <>
+                  <span>·</span>
+                  <span
+                    title={mergedSources
+                      .map((s) => s.subject || s.room_id)
+                      .join("\n")}
+                    className="inline-flex items-center gap-1 rounded-sm border border-border/70 bg-surface px-1 font-mono text-[10px]"
+                  >
+                    <Layers className="h-3 w-3" />
+                    {mergedSources.length} merged
+                  </span>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -955,6 +1049,25 @@ export function MailDisplay() {
               <DropdownMenuItem disabled>
                 <Forward className="mr-2 h-3.5 w-3.5" /> Forward · soon
               </DropdownMenuItem>
+              {mergedSources.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    Merged threads
+                  </div>
+                  {mergedSources.map((s) => (
+                    <DropdownMenuItem
+                      key={s.room_id}
+                      onSelect={() => void clearMergedInto(s.room_id)}
+                    >
+                      <Layers className="mr-2 h-3.5 w-3.5" />
+                      <span className="flex-1 truncate">
+                        Unmerge "{s.subject || s.room_id}"
+                      </span>
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem disabled>Mute conversation</DropdownMenuItem>
               <DropdownMenuItem disabled className="text-destructive focus:text-destructive">

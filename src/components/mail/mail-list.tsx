@@ -15,6 +15,10 @@ import {
   Tag,
   X,
   Filter,
+  Archive as ArchiveIcon,
+  ArchiveRestore,
+  Combine,
+  Layers,
 } from "lucide-react";
 import { cn, relativeTime } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -29,11 +33,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useMailStore, type SortKey } from "@/hooks/use-mail";
 import {
+  setArchivedMany,
   setStarred,
   useConversations,
   userTagLabel,
   type Conversation,
 } from "@/lib/rooms";
+import { MergeThreadsModal } from "@/components/mail/merge-threads";
 
 const SORT_OPTIONS: { value: SortKey; label: string; Icon: typeof Mail }[] = [
   { value: "date-desc", label: "Newest first", Icon: CalendarArrowDown },
@@ -46,11 +52,15 @@ const SORT_OPTIONS: { value: SortKey; label: string; Icon: typeof Mail }[] = [
 function ConversationRow({
   conversation,
   selected,
+  checked,
   onSelect,
+  onToggleCheck,
 }: {
   conversation: Conversation;
   selected: boolean;
+  checked: boolean;
   onSelect: () => void;
+  onToggleCheck: () => void;
 }) {
   const [hover, setHover] = useState(false);
   const last = conversation.messages[conversation.messages.length - 1];
@@ -59,6 +69,7 @@ function ConversationRow({
     conversation.participants.map((p) => p.display_name).join(", ") || "—";
   const hasAttachment = conversation.messages.some((m) => !!m.attachment);
   const userTags = conversation.tags.filter((t) => t.startsWith("u."));
+  const mergedCount = conversation.merged_from.length;
 
   return (
     <div
@@ -70,8 +81,19 @@ function ConversationRow({
         conversation.unread ? "bg-background" : "bg-surface/40",
         hover && "shadow-[inset_0_0_0_9999px_hsl(var(--accent)/0.5)]",
         selected && "bg-selected hover:bg-selected",
+        checked && "bg-selected/60",
       )}
     >
+      {/* Checkbox */}
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={onToggleCheck}
+        onClick={(e) => e.stopPropagation()}
+        aria-label={checked ? "Deselect conversation" : "Select conversation"}
+        className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-seal"
+      />
+
       {/* Star */}
       <button
         type="button"
@@ -120,6 +142,15 @@ function ConversationRow({
                 {userTagLabel(t)}
               </span>
             ))}
+          </span>
+        )}
+        {mergedCount > 0 && (
+          <span
+            title={`Merged with ${mergedCount} other ${mergedCount === 1 ? "thread" : "threads"}`}
+            className="hidden shrink-0 items-center gap-1 rounded-sm border border-border/70 bg-surface px-1 text-[10px] font-medium text-muted-foreground sm:inline-flex"
+          >
+            <Layers className="h-3 w-3" />
+            {mergedCount + 1}
           </span>
         )}
         {last?.body && (
@@ -224,6 +255,12 @@ export function MailList() {
   const setAttachmentsOnly = useMailStore((s) => s.setAttachmentsOnly);
   const unreadOnly = useMailStore((s) => s.unreadOnly);
   const setUnreadOnly = useMailStore((s) => s.setUnreadOnly);
+  const selectedRoomIds = useMailStore((s) => s.selectedRoomIds);
+  const toggleRoomSelected = useMailStore((s) => s.toggleRoomSelected);
+  const setRoomsSelected = useMailStore((s) => s.setRoomsSelected);
+  const clearRoomSelection = useMailStore((s) => s.clearRoomSelection);
+  const mergeModalOpen = useMailStore((s) => s.mergeModalOpen);
+  const setMergeModalOpen = useMailStore((s) => s.setMergeModalOpen);
   const all = useConversations();
 
   const filtered = useMemo(() => {
@@ -259,6 +296,40 @@ export function MailList() {
     (unreadOnly ? 1 : 0) + (attachmentsOnly ? 1 : 0) + (activeTag ? 1 : 0);
   const sortMeta = SORT_OPTIONS.find((o) => o.value === sortBy);
   const SortIcon = sortMeta?.Icon ?? CalendarArrowDown;
+
+  // Restrict the working selection to rooms that are still visible in the
+  // current folder/filter view. Bulk actions then operate only on what the
+  // user can actually see — no surprise archives of out-of-view threads.
+  const visibleSelectedIds = useMemo(() => {
+    if (selectedRoomIds.length === 0) return [] as string[];
+    const visible = new Set(filtered.map((c) => c.room_id));
+    return selectedRoomIds.filter((id) => visible.has(id));
+  }, [selectedRoomIds, filtered]);
+  const selectedConvs = useMemo(
+    () => filtered.filter((c) => visibleSelectedIds.includes(c.room_id)),
+    [filtered, visibleSelectedIds],
+  );
+  const selectionCount = visibleSelectedIds.length;
+  const allFilteredSelected =
+    filtered.length > 0 && selectionCount === filtered.length;
+  const someFilteredSelected = selectionCount > 0 && !allFilteredSelected;
+  const allArchived =
+    selectedConvs.length > 0 && selectedConvs.every((c) => c.archived);
+
+  function toggleSelectAll() {
+    if (allFilteredSelected || someFilteredSelected) {
+      clearRoomSelection();
+    } else {
+      setRoomsSelected(filtered.map((c) => c.room_id));
+    }
+  }
+
+  async function bulkArchive() {
+    const ids = visibleSelectedIds;
+    if (ids.length === 0) return;
+    await setArchivedMany(ids, !allArchived);
+    clearRoomSelection();
+  }
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -296,10 +367,26 @@ export function MailList() {
       <div className="flex flex-wrap items-center gap-1 border-b border-border bg-background px-2 py-1.5 sm:px-4">
         <button
           type="button"
-          aria-label="Select all"
-          className="flex items-center gap-1 rounded p-1.5 text-muted-foreground hover:bg-accent"
+          aria-label={
+            allFilteredSelected
+              ? "Deselect all"
+              : someFilteredSelected
+                ? "Clear selection"
+                : "Select all"
+          }
+          onClick={toggleSelectAll}
+          disabled={filtered.length === 0}
+          className="flex items-center gap-1 rounded p-1.5 text-muted-foreground hover:bg-accent disabled:opacity-50"
         >
-          <input type="checkbox" disabled className="h-3.5 w-3.5" />
+          <input
+            type="checkbox"
+            readOnly
+            checked={allFilteredSelected}
+            ref={(el) => {
+              if (el) el.indeterminate = someFilteredSelected;
+            }}
+            className="h-3.5 w-3.5 cursor-pointer accent-seal"
+          />
           <ChevronDown className="h-3 w-3" />
         </button>
         <button
@@ -413,6 +500,56 @@ export function MailList() {
         </span>
       </div>
 
+      {/* Bulk action bar */}
+      {selectionCount > 0 && (
+        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-selected/40 px-2 py-1.5 text-[12px] sm:px-4">
+          <span className="font-medium">
+            {selectionCount} selected
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => void bulkArchive()}
+              className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 hover:bg-accent"
+            >
+              {allArchived ? (
+                <>
+                  <ArchiveRestore className="h-3.5 w-3.5" />
+                  <span>Restore</span>
+                </>
+              ) : (
+                <>
+                  <ArchiveIcon className="h-3.5 w-3.5" />
+                  <span>Archive</span>
+                </>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMergeModalOpen(true)}
+              disabled={selectionCount < 2}
+              className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 hover:bg-accent disabled:opacity-50"
+              title={
+                selectionCount < 2
+                  ? "Select at least 2 threads to merge"
+                  : "Merge selected threads"
+              }
+            >
+              <Combine className="h-3.5 w-3.5" />
+              <span>Merge</span>
+            </button>
+          </div>
+          <button
+            type="button"
+            onClick={clearRoomSelection}
+            className="ml-auto inline-flex items-center gap-1 rounded p-1 text-muted-foreground hover:bg-accent"
+            aria-label="Clear selection"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Active filter chips */}
       {(activeTag || attachmentsOnly || searchQuery.trim()) && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-surface/40 px-2 py-1.5 text-[11px] sm:px-4">
@@ -484,12 +621,24 @@ export function MailList() {
                 key={c.room_id}
                 conversation={c}
                 selected={c.room_id === selectedRoomId}
+                checked={visibleSelectedIds.includes(c.room_id)}
                 onSelect={() => setSelectedRoomId(c.room_id)}
+                onToggleCheck={() => toggleRoomSelected(c.room_id)}
               />
             ))}
           </div>
         )}
       </ScrollArea>
+
+      <MergeThreadsModal
+        open={mergeModalOpen}
+        onClose={() => setMergeModalOpen(false)}
+        candidates={selectedConvs}
+        onMerged={(primaryId) => {
+          clearRoomSelection();
+          setSelectedRoomId(primaryId);
+        }}
+      />
     </div>
   );
 }
